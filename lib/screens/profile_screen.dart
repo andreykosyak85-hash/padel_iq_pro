@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'rating_simulation_screen.dart'; // <--- Импорт экрана симуляции
 
 class ProfileScreen extends StatelessWidget {
   // 1. Готовим место для приема рейтинга
@@ -20,7 +21,7 @@ class ProfileScreen extends StatelessWidget {
           ),
           const SizedBox(height: 20),
 
-          // Имя (пока оставим статичным, или можно поменять на "Игрок")
+          // Имя
           const Text(
             'Мой Профиль',
             style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
@@ -28,7 +29,7 @@ class ProfileScreen extends StatelessWidget {
           
           // Статус меняется в зависимости от рейтинга
           Text(
-            _getPlayerStatus(rating), // <--- Умная функция ниже
+            _getPlayerStatus(rating), 
             style: const TextStyle(fontSize: 16, color: Colors.grey),
           ),
           const SizedBox(height: 30),
@@ -39,8 +40,7 @@ class ProfileScreen extends StatelessWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                _buildStat('Игр', '5'), // Пока заглушка
-                // ВОТ ЗДЕСЬ ТЕПЕРЬ РЕАЛЬНЫЙ РЕЙТИНГ 👇
+                _buildStat('Игр', '5'),
                 _buildStat('Рейтинг', rating.toStringAsFixed(2)),
                 _buildStat('Винрейт', '50%'),
               ],
@@ -48,11 +48,36 @@ class ProfileScreen extends StatelessWidget {
           ),
           
           const SizedBox(height: 40),
+
+          // --- КНОПКИ ---
+
+          // 1. Кнопка Настройки
           OutlinedButton.icon(
             onPressed: () {},
             icon: const Icon(Icons.settings),
             label: const Text('Настройки'),
-          )
+          ),
+
+          const SizedBox(height: 16), // Отступ
+
+          // 2. НОВАЯ КНОПКА: Лаборатория Рейтинга 🧪
+          OutlinedButton.icon(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  // Передаем текущий рейтинг в лабораторию
+                  builder: (context) => RatingSimulationScreen(currentRating: rating),
+                ),
+              );
+            },
+            icon: const Icon(Icons.science, color: Colors.purple),
+            label: const Text('Лаборатория Рейтинга'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.purple,
+              side: const BorderSide(color: Colors.purple),
+            ),
+          ),
         ],
       ),
     );

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
+import 'tournament_screen.dart'; 
+import '../logic/rating_engine.dart';
 
-// 1. Меняем на StatefulWidget, чтобы экран мог перерисовываться
 class MatchesScreen extends StatefulWidget {
   const MatchesScreen({super.key});
 
@@ -9,113 +10,217 @@ class MatchesScreen extends StatefulWidget {
 }
 
 class _MatchesScreenState extends State<MatchesScreen> {
-  // ЭТО НАША БАЗА ДАННЫХ (Пока в памяти телефона)
-  // Мы храним состояние каждого матча здесь
+  final double myRating = 3.300;
+
+  // Список матчей
   List<Map<String, dynamic>> matches = [
     {
       'id': 1,
-      'time': '18:00',
-      'court': 'Корт №3 (Стекло)',
-      'level': '1.0 - 2.5',
+      'type': 'MATCH', 
+      'title': 'Утренний спарринг',
+      'time': '09:00',
+      'court': 'Корт №3',
+      'minRating': 1.0,
+      'maxRating': 5.0,
       'playersCount': 3,
       'maxPlayers': 4,
       'price': '800₽',
-      'isMyMatch': false, // Я еще не записан
-      'isOpen': true,     // Места есть
-      'matchDate': DateTime.now().add(const Duration(hours: 24)), // Завтра
-    },
-    {
-      'id': 2,
-      'time': '19:30',
-      'court': 'Корт №1 (Панорама)',
-      'level': '3.0 - 4.5',
-      'playersCount': 4,
-      'maxPlayers': 4,
-      'price': '1200₽',
-      'isMyMatch': false,
-      'isOpen': false,    // Мест нет
-      'matchDate': DateTime.now().add(const Duration(hours: 24)),
-    },
-    {
-      'id': 3,
-      'time': '21:00',
-      'court': 'Корт №2',
-      'level': 'Любой уровень',
-      'playersCount': 4, // Полная
-      'maxPlayers': 4,
-      'price': '600₽',
-      'isMyMatch': true, // Это УЖЕ моя игра
-      'isOpen': false,
-      // Дата для проверки отмены (через 4 часа)
-      'matchDate': DateTime.now().add(const Duration(hours: 4)), 
+      'isMyMatch': true, 
+      'opponentRating': 2.5,
     },
   ];
 
-  // ФУНКЦИЯ: Записаться на матч
-  void _joinMatch(int index) {
-    setState(() {
-      // 1. Увеличиваем счетчик игроков
-      matches[index]['playersCount']++;
-      
-      // 2. Помечаем, что это ТЕПЕРЬ МОЯ игра
-      matches[index]['isMyMatch'] = true;
+  final List<String> gameFormats = ['MATCH', 'AMERICANO', 'MEXICANO', 'WINNER_COURT', 'TOURNAMENT'];
 
-      // 3. Если стало 4/4, закрываем запись
-      if (matches[index]['playersCount'] >= matches[index]['maxPlayers']) {
-        matches[index]['isOpen'] = false;
-      }
-    });
-
-    // Показываем сообщение об успехе
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Ура! Вы записаны на матч! 🎾'),
-        backgroundColor: Colors.green,
-        duration: Duration(seconds: 2),
-      ),
-    );
-  }
-
-  // ФУНКЦИЯ: Лист ожидания
-  void _joinWaitlist(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Вы в листе ожидания! Мы сообщим, если место освободится.'),
-        backgroundColor: Colors.orange,
-      ),
-    );
-  }
-
-  // ФУНКЦИЯ: Отмена (с проверкой времени)
-  void _cancelMatch(int index, DateTime? matchDate) {
-    if (matchDate != null) {
-       final difference = matchDate.difference(DateTime.now()).inHours;
-       if (difference < 5) {
-         _showErrorDialog('До игры меньше 5 часов. Отмена только через админа.');
-         return;
-       }
+  // 🔥 1. ДОБАВЛЯЕМ ПРОПУЩЕННУЮ ФУНКЦИЮ ВЕСОВ
+  double _getFormatWeight(String type) {
+    switch (type) {
+      case 'TOURNAMENT': return 1.2;
+      case 'MATCH': return 1.0;
+      case 'AMERICANO': return 0.85;
+      case 'MEXICANO': return 0.75;
+      case 'WINNER_COURT': return 0.8;
+      default: return 1.0;
     }
+  }
 
-    // Если всё ок, отменяем
-    setState(() {
-      matches[index]['playersCount']--;
-      matches[index]['isMyMatch'] = false;
-      matches[index]['isOpen'] = true; // Снова открываем запись
-    });
+  // --- ЛОГИКА ---
+  
+  void _showCreateMatchDialog() {
+    String title = 'Новая игра';
+    String selectedFormat = 'MATCH'; 
+    RangeValues currentRange = const RangeValues(1.0, 7.0);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-       const SnackBar(content: Text('Бронь отменена.'))
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Создать игру'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      decoration: const InputDecoration(labelText: 'Название'),
+                      onChanged: (val) => title = val,
+                    ),
+                    const SizedBox(height: 15),
+                    const Text('Формат игры:', style: TextStyle(fontWeight: FontWeight.bold)),
+                    DropdownButton<String>(
+                      value: selectedFormat,
+                      isExpanded: true,
+                      items: gameFormats.map((String value) {
+                        return DropdownMenuItem<String>(
+                          value: value,
+                          child: Text(value),
+                        );
+                      }).toList(),
+                      onChanged: (newValue) {
+                        setDialogState(() => selectedFormat = newValue!);
+                      },
+                    ),
+                    const SizedBox(height: 15),
+                    const Text('Уровень допуска:', style: TextStyle(fontWeight: FontWeight.bold)),
+                    RangeSlider(
+                      values: currentRange,
+                      min: 1.0, max: 7.0, divisions: 12,
+                      labels: RangeLabels(currentRange.start.toStringAsFixed(1), currentRange.end.toStringAsFixed(1)),
+                      onChanged: (val) => setDialogState(() => currentRange = val),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      matches.add({
+                        'id': matches.length + 1,
+                        'type': selectedFormat,
+                        'title': title,
+                        'time': '20:00',
+                        'court': 'Свой корт',
+                        'minRating': currentRange.start,
+                        'maxRating': currentRange.end,
+                        'playersCount': 1,
+                        'maxPlayers': (selectedFormat == 'MATCH' || selectedFormat == 'WINNER_COURT') ? 4 : 8,
+                        'price': '1000₽',
+                        'isMyMatch': true,
+                        'opponentRating': 3.0,
+                      });
+                    });
+                    Navigator.pop(context);
+                  },
+                  child: const Text('Создать'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
-  void _showErrorDialog(String message) {
+  void _handleMatchAction(int index) {
+    var match = matches[index];
+    if (match['type'] != 'MATCH') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => TournamentScreen(
+            title: match['title'],
+            format: match['type'],
+          ),
+        ),
+      );
+      return;
+    }
+    _showMatchResultDialog(index);
+  }
+
+  void _showMatchResultDialog(int index) {
+    TextEditingController s1t1 = TextEditingController(); TextEditingController s1t2 = TextEditingController();
+    TextEditingController s2t1 = TextEditingController(); TextEditingController s2t2 = TextEditingController();
+    TextEditingController s3t1 = TextEditingController(); TextEditingController s3t2 = TextEditingController();
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Ошибка'),
-        content: Text(message),
-        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Ок'))],
+        title: const Text('Результат матча 🎾'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Введите счет по сетам:'),
+            const SizedBox(height: 10),
+            _buildSetInput('Сет 1', s1t1, s1t2),
+            _buildSetInput('Сет 2', s2t1, s2t2),
+            _buildSetInput('Сет 3', s3t1, s3t2),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () { Navigator.pop(ctx); _calculateRating(index, false); },
+            child: const Text('Мы проиграли', style: TextStyle(color: Colors.red)),
+          ),
+          ElevatedButton(
+            onPressed: () { Navigator.pop(ctx); _calculateRating(index, true); },
+            child: const Text('ПОБЕДА'),
+          ),
+        ],
       ),
+    );
+  }
+
+  Widget _buildSetInput(String label, TextEditingController c1, TextEditingController c2) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        children: [
+          Text(label, style: const TextStyle(fontWeight: FontWeight.bold)), 
+          const SizedBox(width: 10),
+          SizedBox(width: 50, child: TextField(controller: c1, keyboardType: TextInputType.number, textAlign: TextAlign.center, decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()))),
+          const Padding(padding: EdgeInsets.symmetric(horizontal: 8), child: Text('-')),
+          SizedBox(width: 50, child: TextField(controller: c2, keyboardType: TextInputType.number, textAlign: TextAlign.center, decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()))),
+        ],
+      ),
+    );
+  }
+
+  // 🔥 2. ОБНОВЛЕННЫЙ РАСЧЕТ С УЧЕТОМ ВЕСА ФОРМАТА
+  void _calculateRating(int index, bool isWin) {
+    var match = matches[index];
+    
+    // Получаем вес формата (MATCH=1.0, TOURNAMENT=1.2 и т.д.)
+    double weight = _getFormatWeight(match['type']); 
+
+    // Вызываем движок
+    double delta = RatingEngine.calculateAdvancedDelta(
+      currentRating: myRating,
+      partnerRating: myRating, 
+      opponentAvgRating: match['opponentRating'] ?? 3.0,
+      gamesPlayed: 10,
+      reliability: 1.0,
+      stability: 1.0,
+      repetitionCount: 0,
+      groupTrust: 1.0,
+      formatWeight: weight, // <--- СЮДА ПЕРЕДАЕМ ВЕС
+      result: isWin ? 1 : 0,
+    );
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          isWin 
+          ? 'Победа! Рейтинг: +${(delta).toStringAsFixed(3)} (Вес: x$weight)' 
+          : 'Поражение... Рейтинг: ${(delta).toStringAsFixed(3)} (Вес: x$weight)'
+        ),
+        backgroundColor: isWin ? Colors.green : Colors.red,
+        duration: const Duration(seconds: 3),
+      )
     );
   }
 
@@ -123,92 +228,60 @@ class _MatchesScreenState extends State<MatchesScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey[100],
-      body: ListView(
+      appBar: AppBar(title: const Text('Игры и Турниры')),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _showCreateMatchDialog,
+        backgroundColor: Colors.black,
+        child: const Icon(Icons.add, color: Colors.white),
+      ),
+      body: ListView.builder(
         padding: const EdgeInsets.all(16),
-        children: [
-          const Text('Расписание игр', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 20),
-          
-          // ГЕНЕРИРУЕМ КАРТОЧКИ ИЗ НАШЕГО СПИСКА matches
-          ...List.generate(matches.length, (index) {
-            final match = matches[index];
-            return _buildMatchCard(match, index);
-          }),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMatchCard(Map<String, dynamic> match, int index) {
-    bool isFull = match['playersCount'] >= match['maxPlayers'];
-    bool isMyMatch = match['isMyMatch'];
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 5))],
-      ),
-      child: Column(
-        children: [
-          // Верхняя часть (Время, Корт, Цена)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(color: Colors.blue.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
-                  child: Text(match['time'], style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
-                ),
-                const SizedBox(width: 12),
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(match['court'], style: const TextStyle(fontWeight: FontWeight.bold)),
-                  Text('Уровень: ${match['level']}', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
-                ]),
-              ]),
-              Text(match['price'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-            ],
-          ),
-          const SizedBox(height: 16),
-          
-          // Прогресс бар
-          Row(children: [
-            Expanded(child: ClipRRect(borderRadius: BorderRadius.circular(5), child: LinearProgressIndicator(
-              value: match['playersCount'] / match['maxPlayers'],
-              backgroundColor: Colors.grey[200],
-              color: isFull ? Colors.orange : Colors.green,
-              minHeight: 6,
-            ))),
-            const SizedBox(width: 10),
-            Text('${match['playersCount']}/${match['maxPlayers']}', style: const TextStyle(color: Colors.grey)),
-          ]),
-          const SizedBox(height: 16),
-
-          // --- УМНАЯ КНОПКА (ГЛАВНАЯ ЛОГИКА) ---
-          SizedBox(
-            width: double.infinity,
-            child: isMyMatch
-                ? OutlinedButton( // Если я записан -> Кнопка Отмены
-                    onPressed: () => _cancelMatch(index, match['matchDate']),
-                    style: OutlinedButton.styleFrom(foregroundColor: Colors.red, side: const BorderSide(color: Colors.red)),
-                    child: const Text('Отменить участие'),
-                  )
-                : isFull // Если не я, но мест нет -> Лист ожидания
-                    ? ElevatedButton(
-                        onPressed: () => _joinWaitlist(context),
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.white),
-                        child: const Text('В лист ожидания 🔔'),
-                      )
-                    : ElevatedButton( // Если места есть -> Записаться
-                        onPressed: () => _joinMatch(index), // <--- ВОТ ЗДЕСЬ ВЫЗЫВАЕМ ЗАПИСЬ
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.black, foregroundColor: Colors.white),
-                        child: const Text('Записаться'),
+        itemCount: matches.length,
+        itemBuilder: (context, index) {
+          var match = matches[index];
+          return Card(
+            margin: const EdgeInsets.only(bottom: 16),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: match['type'] == 'MATCH' ? Colors.blue : Colors.purple,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(match['type'], style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10)),
                       ),
-          ),
-        ],
+                      Text(match['price'], style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(match['title'], style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 5),
+                  Text(match['court']),
+                  const SizedBox(height: 15),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: match['isMyMatch'] ? () => _handleMatchAction(index) : null,
+                      style: ElevatedButton.styleFrom(backgroundColor: match['type'] == 'MATCH' ? Colors.green : Colors.deepPurple),
+                      child: Text(
+                        match['type'] == 'MATCH' ? 'Ввести результат' : 'Управление Турниром 🏆',
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  )
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }
