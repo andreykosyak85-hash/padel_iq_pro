@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import 'quiz_screen.dart';
-import 'dashboard_screen.dart'; 
+import 'dashboard_screen.dart';
 
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
@@ -8,81 +7,106 @@ class LoginScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: SafeArea(
-        child: Padding(
+      // Фон берется из темы
+      body: Center(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 24.0),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // 1. Логотип (Картинка)
-              // Исправлено: убрали const и лишние запятые
-              Image.asset(
-                'assets/logo.png',
-                height: 150, 
-                width: 150,  
-              ),
-              const SizedBox(height: 40),
-
-              // 2. Заголовок
-              const Text(
-                'Добро пожаловать\nв Padel MVP',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87,
+              // 1. ЛОГОТИП (Свечение + Картинка)
+              Container(
+                height: 150, // Чуть увеличил для картинки
+                width: 150,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2979FF).withOpacity(0.1),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: const Color(0xFF2979FF).withOpacity(0.5),
+                    width: 2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF2979FF).withOpacity(0.3),
+                      blurRadius: 30,
+                      spreadRadius: 10,
+                    )
+                  ],
+                ),
+                // 🔥 ВАЖНО: Замени 'assets/logo.png' на реальный путь к твоему файлу
+                child: Padding(
+                  padding: const EdgeInsets.all(20.0),
+                  child: Image.asset('assets/logo.png', fit: BoxFit.contain),
                 ),
               ),
-              const SizedBox(height: 12),
+              
+              const SizedBox(height: 50),
 
-              // 3. Подзаголовок
+              // 2. ЗАГОЛОВОК
               const Text(
+                'Padel MVP',
+                style: TextStyle(
+                  fontSize: 32, 
+                  fontWeight: FontWeight.bold, 
+                  color: Colors.white,
+                  letterSpacing: 1.5,
+                ),
+              ),
+              const SizedBox(height: 10),
+              
+              // 3. ПОДЗАГОЛОВОК
+              Text(
                 'Твой путь к профессиональному\nрейтингу начинается здесь',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  fontSize: 16,
-                  color: Colors.grey,
+                  fontSize: 16, 
+                  color: Colors.grey[400],
+                  height: 1.5,
                 ),
               ),
+              
               const SizedBox(height: 60),
 
-              // 4. Кнопка входа
-              ElevatedButton.icon(
-                onPressed: () {
-                  // Переход на Опрос
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(builder: (context) => const QuizScreen()), 
-                  );
-                },
-                icon: const Icon(Icons.login),
-                label: const Text('Войти через Google'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.black,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+              // 4. КНОПКА ВХОДА
+              SizedBox(
+                width: double.infinity,
+                height: 55,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const DashboardScreen(initialRating: 3.40),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.login, color: Colors.black),
+                  label: const Text('Войти через Google'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: Colors.black,
+                    elevation: 5,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(30),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 16, 
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ),
-              
-              const SizedBox(height: 16),
-              
-              // 5. Кнопка "Пропустить"
+              const SizedBox(height: 20),
               TextButton(
                 onPressed: () {
-                   // Переход сразу в Дашборд с рейтингом 1.0
                    Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const DashboardScreen(initialRating: 1.0)
-                    ),
-                  );
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const DashboardScreen(initialRating: 3.40),
+                      ),
+                    );
                 },
-                child: const Text('Я просто посмотреть'),
+                child: const Text('Я просто посмотреть', style: TextStyle(color: Color(0xFF2979FF), fontSize: 16)),
               ),
             ],
           ),
