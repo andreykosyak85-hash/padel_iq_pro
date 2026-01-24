@@ -56,6 +56,12 @@
     <array>
       <string>io.supabase.flutter</string>
     </array>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Нам нужен доступ к галерее, чтобы вы могли загрузить фото профиля.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Нам нужен доступ к камере, чтобы вы могли сделать фото профиля.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Нужен доступ к микрофону для видео (если потребуется).</string>
   </dict>
 </array>
 </dict>

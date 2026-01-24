@@ -1,9 +1,9 @@
+import 'dart:io';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:fl_chart/fl_chart.dart'; // Графики
-import 'package:image_picker/image_picker.dart'; // Фото
-import '../main.dart'; 
-import 'schedule_screen.dart'; // Расписание
+import 'package:image_picker/image_picker.dart';
+import 'package:fl_chart/fl_chart.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -12,379 +12,446 @@ class ProfileScreen extends StatefulWidget {
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
-  // Данные профиля
-  String username = "Загрузка...";
-  double rating = 3.0;
-  String? avatarUrl;
-  bool isLoading = true;
-  bool isUploading = false;
+class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProviderStateMixin {
+  final _supabase = Supabase.instance.client;
+  
+  // --- ПЕРЕМЕННЫЕ СОСТОЯНИЯ ---
+  bool _isLoading = false;
+  String? _avatarUrl;
+  String _username = "Игрок"; 
+  
+  // РЕЙТИНГ (1.0 - 7.0)
+  double playerLevel = 3.00; 
 
-  // Логика переключения графика
-  String selectedPeriod = '6M'; // По умолчанию 6 месяцев
-
-  // Статистика
+  // СТАТИСТИКА (ГЛОБАЛЬНАЯ)
   int totalMatches = 24;
-  int winRate = 75;
-  int streak = 5;
+  int wins = 18;
+  int loses = 6;
+  int winStreak = 5;
   int mvpCount = 8;
+  int winRate = 75;
 
-  final ImagePicker _picker = ImagePicker();
+  // ГЕЙМИФИКАЦИЯ (Скиллы - FIFA Style)
+  // Используем английские сокращения для графика, чтобы они влезали
+  Map<String, double> stats = {
+    'PAC': 75.0, // Скорость
+    'SHO': 60.0, // Удар
+    'PAS': 70.0, // Пас
+    'DRI': 80.0, // Дриблинг
+    'DEF': 40.0, // Защита
+    'PHY': 65.0  // Физика
+  };
+
+  // ИСТОРИЯ МАТЧЕЙ
+  final List<Map<String, dynamic>> matchHistory = [
+    {"date": "24 Янв", "result": "WIN", "score": "6-3, 6-4", "opponent": "Клуб Padel Pro"},
+    {"date": "20 Янв", "result": "WIN", "score": "7-5, 6-2", "opponent": "Arena Center"},
+    {"date": "18 Янв", "result": "LOSE", "score": "4-6, 4-6", "opponent": "Tenerife Top"},
+    {"date": "15 Янв", "result": "WIN", "score": "6-0, 6-1", "opponent": "Padel Z"},
+    {"date": "10 Янв", "result": "WIN", "score": "6-4, 7-6", "opponent": "Home Court"},
+  ];
+
+  // Переменная для графика (0=1M, 1=6M, 2=1Y)
+  int _selectedChartPeriod = 1; 
+
+  // Анимация
+  late AnimationController _animController;
+  late Animation<double> _fadeAnim;
 
   @override
   void initState() {
     super.initState();
+    _animController = AnimationController(vsync: this, duration: const Duration(milliseconds: 800));
+    _fadeAnim = CurvedAnimation(parent: _animController, curve: Curves.easeOut);
+    
     _loadProfile();
+    _animController.forward(); 
   }
 
+  @override
+  void dispose() {
+    _animController.dispose();
+    super.dispose();
+  }
+
+  // --- ЗАГРУЗКА ---
   Future<void> _loadProfile() async {
+    setState(() => _isLoading = true);
     try {
-      final userId = supabase.auth.currentUser!.id;
-      final data = await supabase.from('profiles').select().eq('id', userId).single();
-      if (mounted) {
+      final userId = _supabase.auth.currentUser!.id;
+      final data = await _supabase.from('profiles').select().eq('id', userId).single();
+      
+      _username = data['username'] ?? 'Игрок';
+      _avatarUrl = data['avatar_url'];
+      
+      // Загружаем скиллы безопасно
+      if (data['stats'] != null) {
+        final Map<String, dynamic> loadedStats = data['stats'];
         setState(() {
-          username = data['username'] ?? "Игрок";
-          rating = (data['rating'] as num).toDouble();
-          avatarUrl = data['avatar_url'];
-          isLoading = false;
+          loadedStats.forEach((key, value) {
+            if (stats.containsKey(key)) {
+              stats[key] = (value as num).toDouble();
+            }
+          });
         });
       }
     } catch (e) {
-      debugPrint("Error: $e");
-      setState(() => isLoading = false);
+      debugPrint("Ошибка: $e");
+    } finally {
+      setState(() => _isLoading = false);
     }
   }
 
   Future<void> _uploadPhoto() async {
+    final picker = ImagePicker();
+    final imageFile = await picker.pickImage(source: ImageSource.gallery, maxWidth: 800, imageQuality: 80);
+    
+    if (imageFile == null) return;
+
+    setState(() => _isLoading = true);
     try {
-      final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
-      if (image == null) return;
+      final userId = _supabase.auth.currentUser!.id;
+      final bytes = await imageFile.readAsBytes();
+      final fileExt = imageFile.path.split('.').last;
+      final fileName = '$userId/avatar.$fileExt';
 
-      setState(() => isUploading = true);
-      final imageBytes = await image.readAsBytes();
-      final userId = supabase.auth.currentUser!.id;
-      final fileName = '$userId/avatar_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      await _supabase.storage.from('avatars').uploadBinary(
+        fileName, bytes, fileOptions: const FileOptions(upsert: true)
+      );
+      final imageUrl = _supabase.storage.from('avatars').getPublicUrl(fileName);
+      await _supabase.from('profiles').update({'avatar_url': imageUrl}).eq('id', userId);
 
-      await supabase.storage.from('avatars').uploadBinary(fileName, imageBytes, fileOptions: const FileOptions(upsert: true));
-      final url = supabase.storage.from('avatars').getPublicUrl(fileName);
-      await supabase.from('profiles').update({'avatar_url': url}).eq('id', userId);
-
-      setState(() { avatarUrl = url; isUploading = false; });
+      setState(() {
+        _avatarUrl = '$imageUrl?t=${DateTime.now().millisecondsSinceEpoch}';
+      });
+      if (mounted) _showSnack("Фото обновлено!", true);
     } catch (e) {
-      setState(() => isUploading = false);
-      if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Ошибка: $e")));
+      if (mounted) _showSnack("Ошибка загрузки: $e", false);
+    } finally {
+      setState(() => _isLoading = false);
     }
   }
 
-  void _openEditScreen() {
-    Navigator.push(context, MaterialPageRoute(builder: (c) => const EditProfileScreen())).then((_) => _loadProfile());
-  }
-  void _openSchedule() {
-    Navigator.push(context, MaterialPageRoute(builder: (c) => const ScheduleScreen()));
-  }
-
-  // 🔥 ФЕЙКОВЫЕ ДАННЫЕ ДЛЯ ГРАФИКА (ЧТОБЫ ОН МЕНЯЛСЯ)
-  List<FlSpot> _getChartData() {
-    switch (selectedPeriod) {
-      case '1M':
-        return const [FlSpot(0, 3.3), FlSpot(1, 3.35), FlSpot(2, 3.2), FlSpot(3, 3.4), FlSpot(4, 3.3), FlSpot(5, 3.4)];
-      case 'YTD':
-        return const [FlSpot(0, 2.8), FlSpot(1, 2.9), FlSpot(2, 3.0), FlSpot(3, 3.1), FlSpot(4, 3.2), FlSpot(5, 3.4)];
-      case '6M':
-      default:
-        // Основной график
-        return const [FlSpot(0, 3.0), FlSpot(1, 3.2), FlSpot(2, 3.15), FlSpot(3, 3.4), FlSpot(4, 3.65), FlSpot(5, 3.9)];
+  Future<void> _saveStats() async {
+    try {
+      final userId = _supabase.auth.currentUser!.id;
+      await _supabase.from('profiles').update({'stats': stats}).eq('id', userId);
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      _showSnack("Не удалось сохранить", false);
     }
   }
 
+  void _showSnack(String msg, bool success) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg), 
+      backgroundColor: success ? Colors.green : Colors.red,
+      behavior: SnackBarBehavior.floating,
+    ));
+  }
+
+  // --- ЦВЕТА И РАНГИ ---
+  String _getLevelTitle(double level) {
+    if (level >= 6.0) return "MASTER / PRO";
+    if (level >= 4.5) return "ADVANCED (Cat A)";
+    if (level >= 3.5) return "INTERMEDIATE (Cat B)";
+    if (level >= 2.5) return "LOW-MID (Cat C)";
+    return "ROOKIE (Cat D)";
+  }
+
+  LinearGradient _getLevelGradient(double level) {
+    if (level >= 6.0) return const LinearGradient(colors: [Color(0xFF8E2DE2), Color(0xFF4A00E0), Color(0xFF000000)], begin: Alignment.topLeft, end: Alignment.bottomRight);
+    if (level >= 4.5) return const LinearGradient(colors: [Color(0xFFF2994A), Color(0xFFF2C94C), Color(0xFFd4af37)], begin: Alignment.topLeft, end: Alignment.bottomRight);
+    if (level >= 3.5) return const LinearGradient(colors: [Color(0xFF2980B9), Color(0xFF6DD5FA), Color(0xFF4286f4)], begin: Alignment.topLeft, end: Alignment.bottomRight);
+    if (level >= 2.5) return const LinearGradient(colors: [Color(0xFF00F2FE), Color(0xFF4FACFE)], begin: Alignment.topLeft, end: Alignment.bottomRight);
+    return const LinearGradient(colors: [Color(0xFF43E97B), Color(0xFF38F9D7)], begin: Alignment.topLeft, end: Alignment.bottomRight);
+  }
+
+  Color _getLevelColor(double level) {
+    if (level >= 6.0) return const Color(0xFF8E2DE2);
+    if (level >= 4.5) return const Color(0xFFF2994A);
+    if (level >= 3.5) return const Color(0xFF2980B9);
+    if (level >= 2.5) return const Color(0xFF00F2FE);
+    return const Color(0xFF43E97B);
+  }
+
+  // --- МЕНЮ НАСТРОЕК (FULL) ---
+  void _openSettings() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF0F172A),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(30))),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) {
+          return Container(
+            padding: EdgeInsets.only(top: 25, left: 25, right: 25, bottom: MediaQuery.of(context).viewInsets.bottom + 40),
+            height: MediaQuery.of(context).size.height * 0.85,
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  Container(width: 50, height: 5, decoration: BoxDecoration(color: Colors.grey[700], borderRadius: BorderRadius.circular(10))),
+                  const SizedBox(height: 20),
+                  const Text("Редактор Профиля", style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 30),
+                  
+                  // Слайдер уровня
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(20)),
+                    child: Column(children: [
+                        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                            const Text("Уровень (NTRP)", style: TextStyle(color: Colors.white70)),
+                            Text(playerLevel.toStringAsFixed(1), style: TextStyle(color: _getLevelColor(playerLevel), fontSize: 24, fontWeight: FontWeight.bold)),
+                        ]),
+                        Slider(value: playerLevel, min: 1.0, max: 7.0, divisions: 60, activeColor: _getLevelColor(playerLevel), inactiveColor: Colors.black26, onChanged: (val) { setModalState(() => playerLevel = val); setState(() => playerLevel = val); }),
+                        Text(_getLevelTitle(playerLevel), style: TextStyle(color: _getLevelColor(playerLevel), fontWeight: FontWeight.bold)),
+                    ]),
+                  ),
+                  const SizedBox(height: 20),
+                  
+                  // Слайдеры статов
+                  ...stats.keys.map((key) {
+                    return Column(children: [
+                        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                            Text(key, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                            Text(stats[key]!.toInt().toString(), style: const TextStyle(color: Colors.grey)),
+                        ]),
+                        SliderTheme(
+                             data: SliderTheme.of(context).copyWith(trackHeight: 4, thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6), overlayShape: SliderComponentShape.noOverlay),
+                             child: Slider(value: stats[key]!, min: 0, max: 99, activeColor: Colors.blue, inactiveColor: Colors.white10, onChanged: (val) { setModalState(() => stats[key] = val); setState(() => stats[key] = val); }),
+                        ),
+                        const SizedBox(height: 10),
+                    ]);
+                  }).toList(),
+
+                  const SizedBox(height: 20),
+                  SizedBox(width: double.infinity, height: 50, child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2F80ED), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))), onPressed: _saveStats, child: const Text("Сохранить", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)))),
+                ],
+              ),
+            ),
+          );
+        }
+      ),
+    );
+  }
+
+  // --- UI СТРУКТУРА ---
   @override
   Widget build(BuildContext context) {
-    if (isLoading) return const Scaffold(backgroundColor: Color(0xFF0B101F), body: Center(child: CircularProgressIndicator()));
-
     return Scaffold(
-      backgroundColor: const Color(0xFF0B101F), // Глубокий темный фон
+      backgroundColor: const Color(0xFF0F172A),
       appBar: AppBar(
-        title: const Text("Padel MVP", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        centerTitle: true,
         backgroundColor: Colors.transparent,
         elevation: 0,
-        actions: [
-          IconButton(icon: const Icon(Icons.settings, color: Colors.white), onPressed: _openEditScreen)
-        ],
+        centerTitle: true,
+        title: const Text("ПРОФИЛЬ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, letterSpacing: 2)),
+        actions: [IconButton(icon: const Icon(Icons.settings, color: Colors.white), onPressed: _openSettings)],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Column(
-          children: [
-            const SizedBox(height: 10),
-            
-            // --- 1. ПРЕМИУМ ШАПКА ---
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: const Color(0xFF161B26), 
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: Colors.white.withOpacity(0.05)),
-                boxShadow: [
-                  BoxShadow(color: const Color(0xFF3B82F6).withOpacity(0.25), blurRadius: 25, offset: const Offset(0, 5))
-                ]
-              ),
-              child: Row(
-                children: [
-                  // АВАТАР
-                  GestureDetector(
-                    onTap: _uploadPhoto,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        boxShadow: [BoxShadow(color: const Color(0xFF3B82F6).withOpacity(0.4), blurRadius: 15)],
-                      ),
-                      child: Stack(
-                        children: [
-                          Container(
-                            width: 80, height: 80,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(color: const Color(0xFF60A5FA), width: 2),
-                              image: avatarUrl != null ? DecorationImage(image: NetworkImage(avatarUrl!), fit: BoxFit.cover) : null,
-                              color: const Color(0xFF0B101F),
-                            ),
-                            child: avatarUrl == null ? const Icon(Icons.person, size: 40, color: Colors.grey) : null,
-                          ),
-                          if (isUploading) const Positioned.fill(child: CircularProgressIndicator()),
-                          Positioned(bottom: 0, right: 0, child: Container(padding: const EdgeInsets.all(6), decoration: const BoxDecoration(color: Color(0xFF2F80ED), shape: BoxShape.circle), child: const Icon(Icons.camera_alt, size: 14, color: Colors.white))),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 20),
-                  
-                  // ИМЯ
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(username.toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900)),
-                        const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(gradient: LinearGradient(colors: [Colors.blue.withOpacity(0.2), Colors.purple.withOpacity(0.2)]), borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.blue.withOpacity(0.5))),
-                          child: const Text("AMATEUR", style: TextStyle(color: Color(0xFF60A5FA), fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.0)),
-                        )
-                      ],
-                    ),
-                  ),
-                  // РЕЙТИНГ
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(rating.toStringAsFixed(2), style: const TextStyle(color: Colors.white, fontSize: 38, fontWeight: FontWeight.w900)),
-                      const Text("RATING", style: TextStyle(color: Colors.grey, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
-                    ],
-                  )
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 25),
-
-            // --- 2. ВКЛАДКИ ПЕРИОДА (ТЕПЕРЬ РАБОТАЮТ) ---
-            Container(
-              height: 45,
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(color: const Color(0xFF161B26), borderRadius: BorderRadius.circular(25), border: Border.all(color: Colors.white10)),
-              child: Row(
-                children: [
-                  _buildTab("1M"),
-                  _buildTab("6M"),
-                  _buildTab("YTD"),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 20),
-
-            // --- 3. ГРАФИК (ДИНАМИЧЕСКИЙ) ---
-            Container(
-              height: 280,
-              padding: const EdgeInsets.fromLTRB(10, 20, 20, 10),
-              decoration: BoxDecoration(
-                color: const Color(0xFF161B26),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: Colors.white10),
-                boxShadow: [BoxShadow(color: const Color(0xFF3B82F6).withOpacity(0.15), blurRadius: 20, offset: const Offset(0, 5))]
-              ),
+      body: _isLoading 
+        ? const Center(child: CircularProgressIndicator(color: Color(0xFF2F80ED))) 
+        : FadeTransition(
+            opacity: _fadeAnim,
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.only(left: 10, bottom: 10),
-                    child: Text("Прогресс ($selectedPeriod)", style: const TextStyle(color: Colors.grey, fontSize: 14)),
-                  ),
-                  Expanded(
-                    child: LineChart(
-                      LineChartData(
-                        gridData: FlGridData(show: true, drawVerticalLine: false, getDrawingHorizontalLine: (value) => const FlLine(color: Colors.white10, strokeWidth: 1, dashArray: [5, 5])),
-                        titlesData: FlTitlesData(
-                          show: true,
-                          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                          leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                          bottomTitles: AxisTitles(
-                            sideTitles: SideTitles(
-                              showTitles: true, reservedSize: 30, interval: 1,
-                              getTitlesWidget: (value, meta) {
-                                const titles = ['ОКТ', 'НОЯ', 'ДЕК', 'ЯНВ', 'ФЕВ', 'МАР'];
-                                if (value.toInt() >= 0 && value.toInt() < titles.length) return Padding(padding: const EdgeInsets.only(top: 8.0), child: Text(titles[value.toInt()], style: const TextStyle(color: Colors.grey, fontSize: 10)));
-                                return const Text('');
-                              },
-                            ),
-                          ),
-                        ),
-                        borderData: FlBorderData(show: false),
-                        lineBarsData: [
-                          LineChartBarData(
-                            spots: _getChartData(), // <--- ТЕПЕРЬ БЕРЕМ ДАННЫЕ ИЗ ФУНКЦИИ
-                            isCurved: true,
-                            color: const Color(0xFF3B82F6),
-                            barWidth: 4,
-                            isStrokeCapRound: true,
-                            dotData: FlDotData(show: true, getDotPainter: (spot, percent, barData, index) => FlDotCirclePainter(radius: 5, color: const Color(0xFF0B101F), strokeWidth: 2, strokeColor: const Color(0xFF3B82F6))),
-                            belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [const Color(0xFF3B82F6).withOpacity(0.3), const Color(0xFF3B82F6).withOpacity(0.0)], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
-                          ),
-                        ],
-                        minX: 0, maxX: 5, minY: 2.5, maxY: 4.5,
-                      ),
-                      duration: const Duration(milliseconds: 400), // АНИМАЦИЯ СМЕНЫ
-                      curve: Curves.easeInOut,
-                    ),
-                  ),
+                  _buildFifaCard(),
+                  const SizedBox(height: 30),
+                  _buildNeonStatsGrid(),
+                  const SizedBox(height: 30),
+                  _buildProgressChart(),
+                  const SizedBox(height: 30),
+                  _buildHistorySection(),
+                  const SizedBox(height: 50),
                 ],
               ),
             ),
+          ),
+    );
+  }
 
-            const SizedBox(height: 20),
+  // --- ВИДЖЕТ: FIFA CARD ---
+  Widget _buildFifaCard() {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 600),
+      curve: Curves.easeInOut,
+      width: double.infinity,
+      height: 520, // Большая карта
+      decoration: BoxDecoration(
+        gradient: _getLevelGradient(playerLevel),
+        borderRadius: BorderRadius.circular(30),
+        boxShadow: [BoxShadow(color: _getLevelColor(playerLevel).withOpacity(0.6), blurRadius: 40, offset: const Offset(0, 15))],
+        border: Border.all(color: Colors.white.withOpacity(0.2), width: 1.5)
+      ),
+      child: Stack(
+        children: [
+          // 1. ПАУТИНКА (Radar Chart) - ТЕПЕРЬ ЯРКАЯ И ЗАЛИТАЯ
+          Positioned.fill(
+            child: Padding(
+              padding: const EdgeInsets.all(25.0),
+              child: RadarChart(
+                RadarChartData(
+                  dataSets: [
+                    RadarDataSet(
+                      fillColor: Colors.white.withOpacity(0.25), // 🔥 Заливка белым
+                      borderColor: Colors.white, // 🔥 Яркий контур
+                      entryRadius: 3,
+                      dataEntries: stats.values.map((v) => RadarEntry(value: v)).toList(),
+                      borderWidth: 3,
+                    ),
+                  ],
+                  radarBackgroundColor: Colors.transparent,
+                  borderData: FlBorderData(show: false),
+                  radarBorderData: const BorderSide(color: Colors.white30, width: 2),
+                  // 🔥 ПОДПИСИ ПО УГЛАМ (ATK, DEF...)
+                  titleTextStyle: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900, shadows: [Shadow(color: Colors.black, blurRadius: 2)]),
+                  titlePositionPercentageOffset: 0.1, 
+                  getTitle: (index, angle) {
+                    return RadarChartTitle(text: stats.keys.elementAt(index));
+                  },
+                  tickCount: 1,
+                  ticksTextStyle: const TextStyle(color: Colors.transparent),
+                  gridBorderData: BorderSide(color: Colors.white.withOpacity(0.2), width: 1),
+                ),
+              ),
+            ),
+          ),
 
-            // ПЛИТКИ
-            GridView.count(
-              crossAxisCount: 2, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
-              crossAxisSpacing: 15, mainAxisSpacing: 15, childAspectRatio: 1.5,
+          // 2. ИНФОРМАЦИЯ ПОВЕРХ ГРАФИКА
+          Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _buildStatCard(Icons.pie_chart, "$winRate%", "Винрейт", Colors.purpleAccent),
-                _buildStatCard(Icons.sports_tennis, "$totalMatches", "Матчей", Colors.blueAccent),
-                _buildStatCard(Icons.local_fire_department, "$streak Win", "Серия", Colors.orangeAccent),
-                _buildStatCard(Icons.star, "$mvpCount раз", "MVP", Colors.yellowAccent),
+                const SizedBox(height: 30), // Отступ сверху
+                Text(playerLevel.toStringAsFixed(1), style: const TextStyle(fontSize: 85, fontWeight: FontWeight.w900, color: Colors.white, height: 0.9, shadows: [Shadow(color: Colors.black38, blurRadius: 10)])),
+                
+                Container(
+                  margin: const EdgeInsets.symmetric(vertical: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.white24)),
+                  child: Text(_getLevelTitle(playerLevel), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1)),
+                ),
+                
+                GestureDetector(
+                  onTap: _uploadPhoto,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white60, width: 2)),
+                    child: CircleAvatar(
+                      radius: 65, 
+                      backgroundColor: Colors.white10, 
+                      backgroundImage: _avatarUrl != null ? NetworkImage(_avatarUrl!) : null, 
+                      child: _avatarUrl == null ? const Icon(Icons.person, size: 70, color: Colors.white54) : null
+                    ),
+                  ),
+                ),
+                
+                const SizedBox(height: 15),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Text(_username.toUpperCase(), style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.white, shadows: [Shadow(color: Colors.black45, blurRadius: 5)]), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+                
+                const SizedBox(height: 30),
+
+                // 🔥 ПОКАЗАТЕЛИ ВНИЗУ КАРТЫ (Разбросаны)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 40),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _cardStat("PAC", stats['PAC'] ?? 0), 
+                      Container(height: 25, width: 1, color: Colors.white30),
+                      _cardStat("DRI", stats['DRI'] ?? 0),
+                      Container(height: 25, width: 1, color: Colors.white30),
+                      _cardStat("SHO", stats['SHO'] ?? 0),
+                    ],
+                  ),
+                )
               ],
             ),
-            
-            const SizedBox(height: 20),
-            
-            // Расписание и Выход
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton.icon(
-                onPressed: _openSchedule,
-                icon: const Icon(Icons.calendar_month, color: Colors.white),
-                label: const Text("Мое расписание", style: TextStyle(color: Colors.white)),
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1F2937), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-              ),
-            ),
-             TextButton(
-               onPressed: () async { await supabase.auth.signOut(); if(mounted) Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false); },
-               child: const Text("Выйти", style: TextStyle(color: Colors.redAccent)),
-             ),
-            const SizedBox(height: 30),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  // 🔥 ИСПРАВЛЕННАЯ ФУНКЦИЯ ВКЛАДОК (ТЕПЕРЬ КЛИКАБЕЛЬНАЯ)
-  Widget _buildTab(String text) {
-    bool isActive = selectedPeriod == text;
+  Widget _cardStat(String label, double val) {
+    return Column(children: [
+        Text(val.toInt().toString(), style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 22, color: Colors.white, shadows: [Shadow(color: Colors.black45, blurRadius: 3)])),
+        Text(label, style: const TextStyle(fontSize: 10, color: Colors.white70, fontWeight: FontWeight.bold, letterSpacing: 1)),
+    ]);
+  }
+
+  // --- WIDGET: НЕОНОВЫЕ БЛОКИ ---
+  Widget _buildNeonStatsGrid() {
+    return Column(children: [
+        Row(children: [_statBox("Матчей", "$totalMatches", Colors.blue, Icons.sports_tennis), const SizedBox(width: 15), _statBox("Винрейт", "$winRate%", Colors.purple, Icons.pie_chart)]),
+        const SizedBox(height: 15),
+        Row(children: [_statBox("Победы", "$wins", Colors.green, Icons.emoji_events), const SizedBox(width: 15), _statBox("MVP", "$mvpCount", Colors.orange, Icons.star)]),
+    ]);
+  }
+
+  Widget _statBox(String label, String val, Color color, IconData icon) {
     return Expanded(
-      child: GestureDetector(
-        onTap: () {
-          setState(() {
-            selectedPeriod = text; // Меняем выбранный период
-          });
-        },
-        child: Container(
-          alignment: Alignment.center,
-          decoration: isActive 
-            ? BoxDecoration(color: const Color(0xFF3B82F6), borderRadius: BorderRadius.circular(20), boxShadow: [BoxShadow(color: Colors.blue.withOpacity(0.4), blurRadius: 10)]) 
-            : null,
-          child: Text(text, style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontWeight: FontWeight.bold)),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(20), border: Border.all(color: color.withOpacity(0.3)), boxShadow: [BoxShadow(color: color.withOpacity(0.1), blurRadius: 10)]),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Icon(icon, color: color, size: 24),
+            const SizedBox(height: 10),
+            Text(val, style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+            Text(label, style: TextStyle(color: Colors.grey[400], fontSize: 12)),
+        ]),
+      ),
+    );
+  }
+
+  // --- WIDGET: ГРАФИК ПРОГРЕССА ---
+  Widget _buildProgressChart() {
+    List<FlSpot> spots = [];
+    if (_selectedChartPeriod == 0) spots = [const FlSpot(0, 2.9), const FlSpot(1, 2.95), const FlSpot(2, 3.0), FlSpot(3, playerLevel)];
+    else if (_selectedChartPeriod == 1) spots = [const FlSpot(0, 1.5), const FlSpot(1, 2.0), const FlSpot(2, 2.2), const FlSpot(3, 2.5), const FlSpot(4, 2.8), FlSpot(5, playerLevel)];
+    else spots = [const FlSpot(0, 1.0), const FlSpot(1, 1.5), const FlSpot(2, 2.0), const FlSpot(3, 2.5), const FlSpot(4, 2.9), FlSpot(5, playerLevel)];
+
+    return Column(children: [
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            const Text("ПРОГРЕСС", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            Container(decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(12)), padding: const EdgeInsets.all(4), child: Row(children: [_chartBtn("1M", 0), const SizedBox(width: 5), _chartBtn("6M", 1), const SizedBox(width: 5), _chartBtn("1Y", 2)])),
+        ]),
+        const SizedBox(height: 15),
+        Container(height: 220, padding: const EdgeInsets.all(15), decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white10)),
+          child: LineChart(LineChartData(
+              gridData: FlGridData(show: true, drawVerticalLine: false, getDrawingHorizontalLine: (v) => FlLine(color: Colors.white10, strokeWidth: 1)),
+              titlesData: FlTitlesData(show: false), borderData: FlBorderData(show: false), minX: 0, maxX: spots.last.x, minY: 0, maxY: 7.5,
+              lineBarsData: [LineChartBarData(spots: spots, isCurved: true, color: _getLevelColor(playerLevel), barWidth: 4, dotData: FlDotData(show: true), belowBarData: BarAreaData(show: true, color: _getLevelColor(playerLevel).withOpacity(0.2)))]
+          ), duration: const Duration(milliseconds: 500)),
         ),
-      ),
-    );
+    ]);
   }
 
-  Widget _buildStatCard(IconData icon, String value, String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF161B26), 
-        borderRadius: BorderRadius.circular(20), 
-        border: Border.all(color: Colors.white.withOpacity(0.05)),
-        boxShadow: [BoxShadow(color: color.withOpacity(0.4), blurRadius: 20, spreadRadius: 1, offset: const Offset(0, 4))]
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Container(padding: const EdgeInsets.all(6), decoration: BoxDecoration(color: color.withOpacity(0.1), shape: BoxShape.circle), child: Icon(icon, color: color, size: 20)),
-          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(value, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-              Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
-          ])
-        ],
-      ),
-    );
+  Widget _chartBtn(String text, int index) {
+    bool active = _selectedChartPeriod == index;
+    return GestureDetector(onTap: () => setState(() => _selectedChartPeriod = index), child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: active ? const Color(0xFF2F80ED) : Colors.transparent, borderRadius: BorderRadius.circular(8)), child: Text(text, style: TextStyle(color: active ? Colors.white : Colors.grey, fontWeight: FontWeight.bold, fontSize: 12))));
   }
-}
 
-class EditProfileScreen extends StatefulWidget {
-  const EditProfileScreen({super.key});
-  @override
-  State<EditProfileScreen> createState() => _EditProfileScreenState();
-}
-
-class _EditProfileScreenState extends State<EditProfileScreen> {
-  Map<String, double> stats = {'SMA': 3.0, 'DEF': 3.0, 'TAC': 3.0, 'VOL': 3.0, 'LOB': 3.0, 'PHY': 3.0};
-  @override
-  void initState() { super.initState(); _loadStats(); }
-  Future<void> _loadStats() async {
-    final userId = supabase.auth.currentUser!.id;
-    final data = await supabase.from('profiles').select().eq('id', userId).single();
-    if(mounted && data['stats'] != null) { setState(() { stats = (data['stats'] as Map<String, dynamic>).map((k, v) => MapEntry(k, (v as num).toDouble())); }); }
-  }
-  Future<void> _save() async {
-     final userId = supabase.auth.currentUser!.id;
-     await supabase.from('profiles').update({'stats': stats}).eq('id', userId);
-     if(mounted) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Сохранено!"))); Navigator.pop(context); }
-  }
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF0B101F),
-      appBar: AppBar(title: const Text("Настройка навыков", style: TextStyle(color: Colors.white)), backgroundColor: Colors.transparent, iconTheme: const IconThemeData(color: Colors.white)),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          ...stats.keys.map((key) => _buildSlider(key)),
-          const SizedBox(height: 30),
-          ElevatedButton(onPressed: _save, style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF3B82F6), padding: const EdgeInsets.all(15)), child: const Text("Сохранить", style: TextStyle(color: Colors.white)))
-        ],
-      ),
-    );
-  }
-  Widget _buildSlider(String key) {
+  // --- WIDGET: ИСТОРИЯ МАТЧЕЙ ---
+  Widget _buildHistorySection() {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(key, style: const TextStyle(color: Colors.white)), Text(stats[key]!.toStringAsFixed(1), style: const TextStyle(color: Color(0xFF3B82F6)))]),
-         Slider(value: stats[key]!, min: 1.0, max: 7.0, divisions: 60, activeColor: const Color(0xFF3B82F6), onChanged: (v) => setState(() => stats[key] = v))
+        const Text("ИСТОРИЯ ИГР", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 15),
+        ListView.separated(shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), itemCount: matchHistory.length, separatorBuilder: (c, i) => const SizedBox(height: 10), itemBuilder: (context, index) {
+            final match = matchHistory[index];
+            bool isWin = match['result'] == "WIN";
+            return Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(16)), child: Row(children: [
+                  Container(width: 40, height: 40, decoration: BoxDecoration(color: isWin ? Colors.green.withOpacity(0.2) : Colors.red.withOpacity(0.2), shape: BoxShape.circle), child: Center(child: Text(match['result'][0], style: TextStyle(color: isWin ? Colors.green : Colors.red, fontWeight: FontWeight.bold)))),
+                  const SizedBox(width: 15),
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(match['opponent'], style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)), Text(match['date'], style: TextStyle(color: Colors.grey[500], fontSize: 12))])),
+                  Text(match['score'], style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ]));
+        }),
     ]);
   }
 }
