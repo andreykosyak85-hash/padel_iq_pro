@@ -129,7 +129,7 @@ class _QuizScreenState extends State<QuizScreen> {
                         child: Text(answer['text'], style: const TextStyle(fontSize: 16, color: Colors.white)),
                       ),
                     );
-                  }).toList(),
+                  }),
                 ],
               ),
             )

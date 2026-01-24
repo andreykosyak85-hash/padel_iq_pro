@@ -45,5 +45,18 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSFaceIDUsageDescription</key>
+<string>Подтвердите вход в Padel MVP с помощью Face ID.</string>
+<key>CFBundleURLTypes</key>
+<array>
+  <dict>
+    <key>CFBundleTypeRole</key>
+    <string>Editor</string>
+    <key>CFBundleURLSchemes</key>
+    <array>
+      <string>io.supabase.flutter</string>
+    </array>
+  </dict>
+</array>
 </dict>
 </plist>

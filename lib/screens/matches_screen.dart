@@ -233,7 +233,7 @@ class _MatchesScreenState extends State<MatchesScreen> {
                     ),
                     const SizedBox(height: 20),
                     DropdownButtonFormField<String>(
-                      value: selectedFormat,
+                      initialValue: selectedFormat,
                       dropdownColor: const Color(0xFF161B22),
                       style: const TextStyle(color: Colors.white),
                       isExpanded: true,
@@ -278,7 +278,7 @@ class _MatchesScreenState extends State<MatchesScreen> {
                       labels: RangeLabels(currentRange.start.toStringAsFixed(1), currentRange.end.toStringAsFixed(1)),
                       onChanged: (val) => setDialogState(() => currentRange = val),
                     ),
-                    SwitchListTile(title: const Text("Публичная", style: TextStyle(color: Colors.white)), value: isPublic, activeColor: const Color(0xFF2F80ED), onChanged: (val) => setDialogState(() => isPublic = val))
+                    SwitchListTile(title: const Text("Публичная", style: TextStyle(color: Colors.white)), value: isPublic, activeThumbColor: const Color(0xFF2F80ED), onChanged: (val) => setDialogState(() => isPublic = val))
                   ],
                 ),
               ),

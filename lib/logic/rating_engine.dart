@@ -1,68 +1,106 @@
 import 'dart:math';
 
 class RatingEngine {
-  /// Главная функция расчета изменения рейтинга (Delta)
-  /// Все рейтинги приходят в формате 1.0 - 7.0, но внутри умножаются на 1000
+  /// Основная функция расчета изменения рейтинга (Delta)
+  /// Входные рейтинги в формате 1.0–7.0.
+  /// Внутри умножаются на 1000 для точности.
   static double calculateAdvancedDelta({
-    required double currentRating,    // Твой рейтинг (напр. 2.5)
-    required double partnerRating,    // Рейтинг партнера (напр. 2.6)
-    required double opponentAvgRating,// Средний рейтинг соперников (напр. 2.55)
-    required int gamesPlayed,         // Сколько игр сыграл (опыт)
-    required double reliability,      // Надёжность (0.0 - 1.0)
-    required double stability,        // Стабильность (0.0 - 1.0)
-    required int repetitionCount,     // Сколько раз играл с ними (Антифарм)
-    required double groupTrust,       // Доверие к матчу/клубу (0.0 - 1.0)
-    required double formatWeight,     // Турнир (1.5) или товарняк (1.0)
-    required int result,              // 1 (Победа) или 0 (Поражение)
+    required double currentRating,
+    required double partnerRating,
+    required double opponentAvgRating,
+    required int gamesPlayed,
+    required double reliability,
+    required double stability,
+    required int repetitionCount,
+    required double groupTrust,
+    required double formatWeight,
+    required int result,
   }) {
-    // 1. Конвертируем в очки (2.5 -> 2500) для точности формул
+    // Переводим в «очки»
     double pRating = currentRating * 1000;
     double partRating = partnerRating * 1000;
     double oppRating = opponentAvgRating * 1000;
 
-    // 2. K-Factor (Динамический: новичкам легче расти/падать)
-    double K = 32.0;
-    if (gamesPlayed < 10) K = 60.0;
-    else if (gamesPlayed < 30) K = 40.0;
+    // Базовый K-фактор (динамический)
+    double K = _calculateKFactor(gamesPlayed);
 
-    // 3. Математическое ожидание (Формула Эло)
-    // Вероятность победы от 0 до 1
+    // Ожидаемый результат (упрощённая формула Эло)
     double expected = 1 / (1 + pow(10, (oppRating - pRating) / 400));
 
-    // 4. Базовая Дельта
+    // Исходная дельта
     double delta = K * (result - expected);
 
-    // --- 🧠 ПРОДВИНУТЫЕ МОДИФИКАТОРЫ (ТВОЙ КОД) ---
+    // Применяем модификаторы по порядку
+    delta = _applyPartnerModifier(delta, pRating, partRating);
+    delta = _applyAntiFarm(delta, repetitionCount);
+    delta = _applyGroupTrust(delta, groupTrust);
+    delta = _applyFormatWeight(delta, formatWeight);
+    delta = _applyReliabilityStability(delta, reliability, stability);
 
-    // А. Партнёр (Если партнер намного сильнее, ты получаешь меньше)
+    // Перевод обратно в шкалу 1.0–7.0
+    double finalDelta = delta / 1000;
+
+    // Минимальный шаг изменения рейтинга (не меньше ±0.002)
+    finalDelta = _applyMinimumDelta(finalDelta, 0.002);
+
+    // Ограничиваем итоговое изменение, чтобы избежать резких скачков
+    return finalDelta.clamp(-0.15, 0.15);
+  }
+
+  /// K-Factor в зависимости от опыта
+  static double _calculateKFactor(int gamesPlayed) {
+    if (gamesPlayed < 10) return 60.0;
+    if (gamesPlayed < 30) return 40.0;
+    return 32.0;
+  }
+
+  /// Модификатор влияния партнёра
+  static double _applyPartnerModifier(
+      double delta, double pRating, double partRating) {
     double partnerDiff = partRating - pRating;
-    if (partnerDiff > 200) delta *= 0.9;   // "Тащил" партнер
-    if (partnerDiff < -200) delta *= 1.1;  // Ты "тащил" партнера
-
-    // Б. 🛡️ Антифарм (Игра с одними и теми же)
-    if (repetitionCount > 5) {
-      delta *= 0.5; // Режем в 2 раза
-    } else if (repetitionCount > 3) {
-      delta *= 0.7; // Режем на 30%
+    if (partnerDiff > 200) {
+      // Если партнёр намного сильнее — уменьшаем
+      delta *= 0.9;
+    } else if (partnerDiff < -200) {
+      // Если партнёр слабее — увеличиваем
+      delta *= 1.1;
     }
+    return delta;
+  }
 
-    // В. 👥 Группы / Доверие
-    // Если матч непроверенный (trust 0.5), дельта меньше
-    delta *= 1 - (1 - groupTrust) * 0.3;
+  /// Антифарм: резкое снижение дельты при частой игре с теми же
+  static double _applyAntiFarm(double delta, int repetitionCount) {
+    if (repetitionCount > 5) {
+      delta *= 0.5;
+    } else if (repetitionCount > 3) delta *= 0.7;
+    return delta;
+  }
 
-    // Г. 🎮 Формат (Турнир важнее)
-    delta *= formatWeight;
+  /// Надёжность группы/матча
+  static double _applyGroupTrust(double delta, double groupTrust) {
+    return delta * (1 - (1 - groupTrust) * 0.3);
+  }
 
-    // Д. 📉 Надёжность и стабильность
-    // Если игрок часто отменяет матчи (reliability низкий), рейтинг растет медленнее
-    delta *= (1 - (1 - reliability) * 0.4); 
-    // Если игрок нестабилен, даем шанс измениться быстрее (или наоборот, зависит от логики)
-    // В твоей формуле: delta *= (0.5 + stability * 0.5)
-    // Если стабильность 1.0 -> множитель 1.0. Если 0.0 -> множитель 0.5.
+  /// Вес формата (турнир / товарищеский)
+  static double _applyFormatWeight(double delta, double formatWeight) {
+    return delta * formatWeight;
+  }
+
+  /// Надёжность (reliability) и стабильность (stability)
+  static double _applyReliabilityStability(
+      double delta, double reliability, double stability) {
+    // Надёжность: меньше роста при ненадёжном игроке
+    delta *= (1 - (1 - reliability) * 0.4);
+    // Стабильность: смягчает колебания
     delta *= (0.5 + stability * 0.5);
+    return delta;
+  }
 
-    // 5. Возвращаем результат, переведенный обратно в шкалу (делим на 1000)
-    // Округляем до 3 знаков после запятой (1.340)
-    return (delta / 1000); 
+  /// Минимальный шаг изменения рейтинга
+  static double _applyMinimumDelta(double delta, double minStep) {
+    if (delta.abs() < minStep) {
+      return delta.isNegative ? -minStep : minStep;
+    }
+    return delta;
   }
 }

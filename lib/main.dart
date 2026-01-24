@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:padel_app/screens/login_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart'; 
 import 'screens/auth_screen.dart'; // Твой экран входа
 import 'screens/matches_screen.dart'; // Твой главный экран
@@ -38,7 +39,7 @@ class MyApp extends StatelessWidget {
       // Если нет - показываем экран входа.
       home: supabase.auth.currentSession != null 
           ? const MatchesScreen() 
-          : const AuthScreen(),
+          : const LoginScreen(),
     );
     // update version
   }

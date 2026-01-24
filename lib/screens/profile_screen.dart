@@ -374,7 +374,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          ...stats.keys.map((key) => _buildSlider(key)).toList(),
+          ...stats.keys.map((key) => _buildSlider(key)),
           const SizedBox(height: 30),
           ElevatedButton(onPressed: _save, style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF3B82F6), padding: const EdgeInsets.all(15)), child: const Text("Сохранить", style: TextStyle(color: Colors.white)))
         ],

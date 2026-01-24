@@ -1,4 +1,3 @@
-import 'dart:math';
 
 class AmericanoLogic {
   // 1. РАСЧЕТ МЕСТ И ЛИСТА ОЖИДАНИЯ

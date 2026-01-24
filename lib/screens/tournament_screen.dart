@@ -189,14 +189,22 @@ class _TournamentScreenState extends State<TournamentScreen> with SingleTickerPr
       int s2 = match['score2'];
       
       // Начисляем очки ВСЕМ участникам команды
-      for (var p in match['team1']) scores[p] = (scores[p] ?? 0) + s1;
-      for (var p in match['team2']) scores[p] = (scores[p] ?? 0) + s2;
+      for (var p in match['team1']) {
+        scores[p] = (scores[p] ?? 0) + s1;
+      }
+      for (var p in match['team2']) {
+        scores[p] = (scores[p] ?? 0) + s2;
+      }
       
       // Если "Super Mexicano" - бонус за победу на высоком корте (опционально)
       if (widget.gameType.contains('Super')) {
          int courtBonus = (widget.courts - (match['court'] as int) + 1) * 2; // Чем выше корт (1), тем больше бонус
-         if (s1 > s2) for (var p in match['team1']) scores[p] = scores[p]! + courtBonus;
-         if (s2 > s1) for (var p in match['team2']) scores[p] = scores[p]! + courtBonus;
+         if (s1 > s2) for (var p in match['team1']) {
+           scores[p] = scores[p]! + courtBonus;
+         }
+         if (s2 > s1) for (var p in match['team2']) {
+           scores[p] = scores[p]! + courtBonus;
+         }
       }
     }
 
