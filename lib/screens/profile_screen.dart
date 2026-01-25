@@ -14,35 +14,32 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProviderStateMixin {
   final _supabase = Supabase.instance.client;
+  final Color _darkBg = const Color(0xFF0F172A);
   
-  // --- ПЕРЕМЕННЫЕ СОСТОЯНИЯ ---
+  // --- ПЕРЕМЕННЫЕ ---
   bool _isLoading = false;
   String? _avatarUrl;
   String _username = "Игрок"; 
-  
-  // РЕЙТИНГ (1.0 - 7.0)
   double playerLevel = 3.00; 
 
-  // СТАТИСТИКА (ГЛОБАЛЬНАЯ)
+  // СТАТИСТИКА
   int totalMatches = 24;
   int wins = 18;
   int loses = 6;
-  int winStreak = 5;
   int mvpCount = 8;
   int winRate = 75;
 
-  // ГЕЙМИФИКАЦИЯ (Скиллы - FIFA Style)
-  // Используем английские сокращения для графика, чтобы они влезали
+  // 🔥 СКИЛЛЫ
   Map<String, double> stats = {
-    'PAC': 75.0, // Скорость
-    'SHO': 60.0, // Удар
-    'PAS': 70.0, // Пас
-    'DRI': 80.0, // Дриблинг
-    'DEF': 40.0, // Защита
-    'PHY': 65.0  // Физика
+    'SMA': 75.0, // Smash
+    'VOL': 80.0, // Volley
+    'LOB': 70.0, // Lob
+    'DEF': 65.0, // Defense
+    'SPD': 72.0, // Speed
+    'PWR': 60.0  // Power
   };
 
-  // ИСТОРИЯ МАТЧЕЙ
+  // ИСТОРИЯ (ПОЛНАЯ)
   final List<Map<String, dynamic>> matchHistory = [
     {"date": "24 Янв", "result": "WIN", "score": "6-3, 6-4", "opponent": "Клуб Padel Pro"},
     {"date": "20 Янв", "result": "WIN", "score": "7-5, 6-2", "opponent": "Arena Center"},
@@ -51,10 +48,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     {"date": "10 Янв", "result": "WIN", "score": "6-4, 7-6", "opponent": "Home Court"},
   ];
 
-  // Переменная для графика (0=1M, 1=6M, 2=1Y)
   int _selectedChartPeriod = 1; 
-
-  // Анимация
   late AnimationController _animController;
   late Animation<double> _fadeAnim;
 
@@ -63,7 +57,6 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     super.initState();
     _animController = AnimationController(vsync: this, duration: const Duration(milliseconds: 800));
     _fadeAnim = CurvedAnimation(parent: _animController, curve: Curves.easeOut);
-    
     _loadProfile();
     _animController.forward(); 
   }
@@ -74,8 +67,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     super.dispose();
   }
 
-  // --- ЗАГРУЗКА ---
-  Future<void> _loadProfile() async {
+Future<void> _loadProfile() async {
     setState(() => _isLoading = true);
     try {
       final userId = _supabase.auth.currentUser!.id;
@@ -84,7 +76,15 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
       _username = data['username'] ?? 'Игрок';
       _avatarUrl = data['avatar_url'];
       
-      // Загружаем скиллы безопасно
+      // 👇👇👇 ДОБАВЬ ВОТ ЭТОТ БЛОК 👇👇👇
+      if (data['level'] != null) {
+        setState(() {
+          playerLevel = (data['level'] as num).toDouble();
+        });
+      }
+      // 👆👆👆 КОНЕЦ ВСТАВКИ 👆👆👆
+
+      // Загружаем скиллы
       if (data['stats'] != null) {
         final Map<String, dynamic> loadedStats = data['stats'];
         setState(() {
@@ -105,7 +105,6 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
   Future<void> _uploadPhoto() async {
     final picker = ImagePicker();
     final imageFile = await picker.pickImage(source: ImageSource.gallery, maxWidth: 800, imageQuality: 80);
-    
     if (imageFile == null) return;
 
     setState(() => _isLoading = true);
@@ -135,10 +134,19 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
   Future<void> _saveStats() async {
     try {
       final userId = _supabase.auth.currentUser!.id;
-      await _supabase.from('profiles').update({'stats': stats}).eq('id', userId);
-      if (mounted) Navigator.pop(context);
+      // 👇 ВОТ ЭТА МАГИЧЕСКАЯ ДОБАВКА, КОТОРАЯ ЧИНИТ ВСЁ:
+      await _supabase.from('profiles').update({
+        'stats': stats,
+        'level': playerLevel, // Теперь мы сохраняем уровень!
+      }).eq('id', userId);
+      
+      if (mounted) {
+         Navigator.pop(context); // Закрываем окно
+         _showSnack("Профиль сохранен!", true);
+         // Опционально: можно заставить обновиться, но проще перезайти на вкладку
+      }
     } catch (e) {
-      _showSnack("Не удалось сохранить", false);
+      _showSnack("Не удалось сохранить: $e", false);
     }
   }
 
@@ -150,36 +158,42 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     ));
   }
 
-  // --- ЦВЕТА И РАНГИ ---
+  // 1. ТИТУЛЫ (Вернули все ранги)
   String _getLevelTitle(double level) {
-    if (level >= 6.0) return "MASTER / PRO";
-    if (level >= 4.5) return "ADVANCED (Cat A)";
-    if (level >= 3.5) return "INTERMEDIATE (Cat B)";
-    if (level >= 2.5) return "LOW-MID (Cat C)";
-    return "ROOKIE (Cat D)";
+    if (level >= 6.0) return "PRO";
+    if (level >= 4.5) return "ADVANCED"; // (ADV)
+    if (level >= 3.5) return "INTERMEDIATE"; // (INT)
+    if (level >= 2.5) return "LOW-MID"; // (MID)
+    return "ROOKIE"; // (ROK)
   }
 
+  // 2. ГРАДИЕНТЫ (Вернули Зеленый и Голубой)
   LinearGradient _getLevelGradient(double level) {
-    if (level >= 6.0) return const LinearGradient(colors: [Color(0xFF8E2DE2), Color(0xFF4A00E0), Color(0xFF000000)], begin: Alignment.topLeft, end: Alignment.bottomRight);
-    if (level >= 4.5) return const LinearGradient(colors: [Color(0xFFF2994A), Color(0xFFF2C94C), Color(0xFFd4af37)], begin: Alignment.topLeft, end: Alignment.bottomRight);
-    if (level >= 3.5) return const LinearGradient(colors: [Color(0xFF2980B9), Color(0xFF6DD5FA), Color(0xFF4286f4)], begin: Alignment.topLeft, end: Alignment.bottomRight);
-    if (level >= 2.5) return const LinearGradient(colors: [Color(0xFF00F2FE), Color(0xFF4FACFE)], begin: Alignment.topLeft, end: Alignment.bottomRight);
-    return const LinearGradient(colors: [Color(0xFF43E97B), Color(0xFF38F9D7)], begin: Alignment.topLeft, end: Alignment.bottomRight);
+    // PRO (Фиолетовый/Черный)
+    if (level >= 6.0) return const LinearGradient(colors: [Color(0xFF3E1E68), Color(0xFF000000)], begin: Alignment.topCenter, end: Alignment.bottomCenter);
+    // ADVANCED (Золото)
+    if (level >= 4.5) return const LinearGradient(colors: [Color(0xFFF2C94C), Color(0xFFAE8625)], begin: Alignment.topCenter, end: Alignment.bottomCenter);
+    // INTERMEDIATE (Синий)
+    if (level >= 3.5) return const LinearGradient(colors: [Color(0xFF2980B9), Color(0xFF2C3E50)], begin: Alignment.topCenter, end: Alignment.bottomCenter);
+    // MID (Голубой / Cyan) - ВЕРНУЛИ!
+    if (level >= 2.5) return const LinearGradient(colors: [Color(0xFF00F2FE), Color(0xFF4FACFE)], begin: Alignment.topCenter, end: Alignment.bottomCenter);
+    // ROOKIE (Зеленый) - ВЕРНУЛИ!
+    return const LinearGradient(colors: [Color(0xFF43E97B), Color(0xFF38F9D7)], begin: Alignment.topCenter, end: Alignment.bottomCenter);
   }
 
+  // 3. ЦВЕТА ЭЛЕМЕНТОВ (Для иконок и текстов)
   Color _getLevelColor(double level) {
     if (level >= 6.0) return const Color(0xFF8E2DE2);
-    if (level >= 4.5) return const Color(0xFFF2994A);
+    if (level >= 4.5) return const Color(0xFFF2C94C);
     if (level >= 3.5) return const Color(0xFF2980B9);
-    if (level >= 2.5) return const Color(0xFF00F2FE);
-    return const Color(0xFF43E97B);
+    if (level >= 2.5) return const Color(0xFF00F2FE); // Cyan
+    return const Color(0xFF43E97B); // Green
   }
 
-  // --- МЕНЮ НАСТРОЕК (FULL) ---
   void _openSettings() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF0F172A),
+      backgroundColor: _darkBg,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(30))),
       builder: (context) => StatefulBuilder(
@@ -194,8 +208,6 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                   const SizedBox(height: 20),
                   const Text("Редактор Профиля", style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 30),
-                  
-                  // Слайдер уровня
                   Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(20)),
@@ -205,12 +217,9 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                             Text(playerLevel.toStringAsFixed(1), style: TextStyle(color: _getLevelColor(playerLevel), fontSize: 24, fontWeight: FontWeight.bold)),
                         ]),
                         Slider(value: playerLevel, min: 1.0, max: 7.0, divisions: 60, activeColor: _getLevelColor(playerLevel), inactiveColor: Colors.black26, onChanged: (val) { setModalState(() => playerLevel = val); setState(() => playerLevel = val); }),
-                        Text(_getLevelTitle(playerLevel), style: TextStyle(color: _getLevelColor(playerLevel), fontWeight: FontWeight.bold)),
                     ]),
                   ),
                   const SizedBox(height: 20),
-                  
-                  // Слайдеры статов
                   ...stats.keys.map((key) {
                     return Column(children: [
                         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
@@ -224,9 +233,8 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
                         const SizedBox(height: 10),
                     ]);
                   }).toList(),
-
                   const SizedBox(height: 20),
-                  SizedBox(width: double.infinity, height: 50, child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2F80ED), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))), onPressed: _saveStats, child: const Text("Сохранить", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)))),
+                  SizedBox(width: double.infinity, height: 50, child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: _getLevelColor(playerLevel), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))), onPressed: _saveStats, child: const Text("Сохранить", style: TextStyle(color: Colors.black, fontSize: 16, fontWeight: FontWeight.bold)))),
                 ],
               ),
             ),
@@ -236,11 +244,10 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     );
   }
 
-  // --- UI СТРУКТУРА ---
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0F172A),
+      backgroundColor: _darkBg,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -249,7 +256,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
         actions: [IconButton(icon: const Icon(Icons.settings, color: Colors.white), onPressed: _openSettings)],
       ),
       body: _isLoading 
-        ? const Center(child: CircularProgressIndicator(color: Color(0xFF2F80ED))) 
+        ? Center(child: CircularProgressIndicator(color: _getLevelColor(playerLevel))) 
         : FadeTransition(
             opacity: _fadeAnim,
             child: SingleChildScrollView(
@@ -257,14 +264,29 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               child: Column(
                 children: [
-                  _buildFifaCard(),
-                  const SizedBox(height: 30),
+                  // 1. 🔥 ГИБРИДНАЯ КАРТОЧКА (Щит + Баннер + Динамический цвет)
+                  _buildHybridCard(),
+                  
+                  const SizedBox(height: 40),
+                  
+                  // 2. 📊 СТАТИСТИКА
                   _buildNeonStatsGrid(),
-                  const SizedBox(height: 30),
+                  
+                  const SizedBox(height: 40),
+                  
+                  // 3. 📈 ГРАФИК ПРОГРЕССА (ПОЛНЫЙ)
                   _buildProgressChart(),
-                  const SizedBox(height: 30),
+                  
+                  const SizedBox(height: 40),
+                  
+                  // 4. 📝 ИСТОРИЯ МАТЧЕЙ (ПОЛНАЯ)
                   _buildHistorySection(),
+                  
                   const SizedBox(height: 50),
+                  Opacity(opacity: 0.5, child: Icon(Icons.sports_tennis, size: 40, color: _getLevelColor(playerLevel))),
+                  const SizedBox(height: 10),
+                  const Opacity(opacity: 0.5, child: Text("PADEL IQ PRO", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 3))),
+                  const SizedBox(height: 30),
                 ],
               ),
             ),
@@ -272,120 +294,132 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     );
   }
 
-  // --- ВИДЖЕТ: FIFA CARD ---
-  Widget _buildFifaCard() {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 600),
-      curve: Curves.easeInOut,
-      width: double.infinity,
-      height: 520, // Большая карта
-      decoration: BoxDecoration(
-        gradient: _getLevelGradient(playerLevel),
-        borderRadius: BorderRadius.circular(30),
-        boxShadow: [BoxShadow(color: _getLevelColor(playerLevel).withOpacity(0.6), blurRadius: 40, offset: const Offset(0, 15))],
-        border: Border.all(color: Colors.white.withOpacity(0.2), width: 1.5)
-      ),
-      child: Stack(
-        children: [
-          // 1. ПАУТИНКА (Radar Chart) - ТЕПЕРЬ ЯРКАЯ И ЗАЛИТАЯ
-          Positioned.fill(
-            child: Padding(
-              padding: const EdgeInsets.all(25.0),
-              child: RadarChart(
-                RadarChartData(
-                  dataSets: [
-                    RadarDataSet(
-                      fillColor: Colors.white.withOpacity(0.25), // 🔥 Заливка белым
-                      borderColor: Colors.white, // 🔥 Яркий контур
-                      entryRadius: 3,
-                      dataEntries: stats.values.map((v) => RadarEntry(value: v)).toList(),
-                      borderWidth: 3,
-                    ),
-                  ],
-                  radarBackgroundColor: Colors.transparent,
-                  borderData: FlBorderData(show: false),
-                  radarBorderData: const BorderSide(color: Colors.white30, width: 2),
-                  // 🔥 ПОДПИСИ ПО УГЛАМ (ATK, DEF...)
-                  titleTextStyle: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900, shadows: [Shadow(color: Colors.black, blurRadius: 2)]),
-                  titlePositionPercentageOffset: 0.1, 
-                  getTitle: (index, angle) {
-                    return RadarChartTitle(text: stats.keys.elementAt(index));
-                  },
-                  tickCount: 1,
-                  ticksTextStyle: const TextStyle(color: Colors.transparent),
-                  gridBorderData: BorderSide(color: Colors.white.withOpacity(0.2), width: 1),
-                ),
-              ),
-            ),
+  // --- 🔥 ГИБРИДНАЯ КАРТОЧКА ---
+  Widget _buildHybridCard() {
+    double cardWidth = 320;
+    double cardHeight = 520; // Чуть выше из-за баннера
+
+    return GestureDetector(
+      onTap: _uploadPhoto,
+      child: Center(
+        child: Container(
+          width: cardWidth,
+          height: cardHeight,
+          decoration: BoxDecoration(
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.4), blurRadius: 40, spreadRadius: 5, offset: const Offset(0, 20))]
           ),
-
-          // 2. ИНФОРМАЦИЯ ПОВЕРХ ГРАФИКА
-          Center(
+          // 👇 ИСПОЛЬЗУЕМ ЭЛЕГАНТНЫЙ ЩИТ
+          child: ClipPath(
+            clipper: ElegantShieldClipper(),
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const SizedBox(height: 30), // Отступ сверху
-                Text(playerLevel.toStringAsFixed(1), style: const TextStyle(fontSize: 85, fontWeight: FontWeight.w900, color: Colors.white, height: 0.9, shadows: [Shadow(color: Colors.black38, blurRadius: 10)])),
-                
+                // 1. ЗОЛОТОЙ БАННЕР СВЕРХУ (Фиксированный цвет)
                 Container(
-                  margin: const EdgeInsets.symmetric(vertical: 10),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                  decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.white24)),
-                  child: Text(_getLevelTitle(playerLevel), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1)),
+                  height: 50,
+                  width: double.infinity,
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(colors: [Color(0xFFD4AF37), Color(0xFFF2C94C), Color(0xFFD4AF37)]),
+                    border: Border(bottom: BorderSide(color: Colors.white30, width: 1))
+                  ),
+                  child: const Center(child: Text("PADEL PRO PLAYER", style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w900, fontSize: 14, letterSpacing: 3))),
                 ),
-                
-                GestureDetector(
-                  onTap: _uploadPhoto,
+
+                // 2. ОСНОВНОЕ ТЕЛО КАРТОЧКИ (ДИНАМИЧЕСКИЙ ЦВЕТ!)
+                Expanded(
                   child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white60, width: 2)),
-                    child: CircleAvatar(
-                      radius: 65, 
-                      backgroundColor: Colors.white10, 
-                      backgroundImage: _avatarUrl != null ? NetworkImage(_avatarUrl!) : null, 
-                      child: _avatarUrl == null ? const Icon(Icons.person, size: 70, color: Colors.white54) : null
+                    decoration: BoxDecoration(
+                      gradient: _getLevelGradient(playerLevel), // 🔥 Цвет меняется от уровня
+                    ),
+                    child: Stack(
+                      children: [
+                        Positioned.fill(child: Opacity(opacity: 0.15, child: Image.network('https://www.transparenttextures.com/patterns/cubes.png', fit: BoxFit.cover, errorBuilder: (c,e,s)=>Container()))),
+
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 20, 20, 40), // Отступ снизу больше из-за формы
+                          child: Column(
+                            children: [
+                              // Верх: Рейтинг и Фото
+                              Expanded(
+                                flex: 3,
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Column(
+                                      children: [
+                                        Text(playerLevel.toStringAsFixed(1), style: const TextStyle(fontSize: 55, fontWeight: FontWeight.w900, color: Colors.white, height: 1)),
+                                        Text(_getLevelTitle(playerLevel), style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 1)),
+                                        const SizedBox(height: 15),
+                                        Container(height: 1, width: 30, color: Colors.white30),
+                                        const SizedBox(height: 10),
+                                        const Text("🇺🇦", style: TextStyle(fontSize: 30)), 
+                                      ],
+                                    ),
+                                    Expanded(
+                                      child: Center(
+                                        child: Container(
+                                          height: 150, width: 150,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            border: Border.all(color: Colors.white.withOpacity(0.5), width: 3),
+                                            image: DecorationImage(
+                                              fit: BoxFit.cover,
+                                              image: _avatarUrl != null ? NetworkImage(_avatarUrl!) : const NetworkImage('https://i.pravatar.cc/300') 
+                                            )
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                              // Имя
+                              Text(_username.toUpperCase(), style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 1.5), textAlign: TextAlign.center, maxLines: 1),
+                              
+                              const SizedBox(height: 15),
+
+                              // Паутинка внизу
+                              Expanded(
+                                flex: 3,
+                                child: RadarChart(
+                                  RadarChartData(
+                                    dataSets: [
+                                      RadarDataSet(
+                                        fillColor: Colors.white.withOpacity(0.2),
+                                        borderColor: Colors.white.withOpacity(0.9),
+                                        entryRadius: 2,
+                                        dataEntries: stats.values.map((v) => RadarEntry(value: v)).toList(),
+                                        borderWidth: 2,
+                                      ),
+                                    ],
+                                    radarBackgroundColor: Colors.transparent,
+                                    borderData: FlBorderData(show: false),
+                                    radarBorderData: const BorderSide(color: Colors.white38, width: 1),
+                                    titleTextStyle: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                    titlePositionPercentageOffset: 0.1, 
+                                    getTitle: (index, angle) => RadarChartTitle(text: stats.keys.elementAt(index)),
+                                    tickCount: 1,
+                                    ticksTextStyle: const TextStyle(color: Colors.transparent),
+                                    gridBorderData: const BorderSide(color: Colors.white12, width: 1),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
-                
-                const SizedBox(height: 15),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Text(_username.toUpperCase(), style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.white, shadows: [Shadow(color: Colors.black45, blurRadius: 5)]), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
-                ),
-                
-                const SizedBox(height: 30),
-
-                // 🔥 ПОКАЗАТЕЛИ ВНИЗУ КАРТЫ (Разбросаны)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 40),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      _cardStat("PAC", stats['PAC'] ?? 0), 
-                      Container(height: 25, width: 1, color: Colors.white30),
-                      _cardStat("DRI", stats['DRI'] ?? 0),
-                      Container(height: 25, width: 1, color: Colors.white30),
-                      _cardStat("SHO", stats['SHO'] ?? 0),
-                    ],
-                  ),
-                )
               ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _cardStat(String label, double val) {
-    return Column(children: [
-        Text(val.toInt().toString(), style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 22, color: Colors.white, shadows: [Shadow(color: Colors.black45, blurRadius: 3)])),
-        Text(label, style: const TextStyle(fontSize: 10, color: Colors.white70, fontWeight: FontWeight.bold, letterSpacing: 1)),
-    ]);
-  }
-
-  // --- WIDGET: НЕОНОВЫЕ БЛОКИ ---
+  // --- ОСТАЛЬНЫЕ БЛОКИ (ПОЛНЫЕ ВЕРСИИ) ---
   Widget _buildNeonStatsGrid() {
     return Column(children: [
         Row(children: [_statBox("Матчей", "$totalMatches", Colors.blue, Icons.sports_tennis), const SizedBox(width: 15), _statBox("Винрейт", "$winRate%", Colors.purple, Icons.pie_chart)]),
@@ -409,35 +443,37 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     );
   }
 
-  // --- WIDGET: ГРАФИК ПРОГРЕССА ---
+  // 🔥 ГРАФИК ПРОГРЕССА (ПОЛНЫЙ)
   Widget _buildProgressChart() {
     List<FlSpot> spots = [];
     if (_selectedChartPeriod == 0) spots = [const FlSpot(0, 2.9), const FlSpot(1, 2.95), const FlSpot(2, 3.0), FlSpot(3, playerLevel)];
     else if (_selectedChartPeriod == 1) spots = [const FlSpot(0, 1.5), const FlSpot(1, 2.0), const FlSpot(2, 2.2), const FlSpot(3, 2.5), const FlSpot(4, 2.8), FlSpot(5, playerLevel)];
     else spots = [const FlSpot(0, 1.0), const FlSpot(1, 1.5), const FlSpot(2, 2.0), const FlSpot(3, 2.5), const FlSpot(4, 2.9), FlSpot(5, playerLevel)];
 
-    return Column(children: [
+    Color currentColor = _getLevelColor(playerLevel);
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
             const Text("ПРОГРЕСС", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-            Container(decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(12)), padding: const EdgeInsets.all(4), child: Row(children: [_chartBtn("1M", 0), const SizedBox(width: 5), _chartBtn("6M", 1), const SizedBox(width: 5), _chartBtn("1Y", 2)])),
+            Container(decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(12)), padding: const EdgeInsets.all(4), child: Row(children: [_chartBtn("1M", 0, currentColor), const SizedBox(width: 5), _chartBtn("6M", 1, currentColor), const SizedBox(width: 5), _chartBtn("1Y", 2, currentColor)])),
         ]),
         const SizedBox(height: 15),
         Container(height: 220, padding: const EdgeInsets.all(15), decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white10)),
           child: LineChart(LineChartData(
               gridData: FlGridData(show: true, drawVerticalLine: false, getDrawingHorizontalLine: (v) => FlLine(color: Colors.white10, strokeWidth: 1)),
               titlesData: FlTitlesData(show: false), borderData: FlBorderData(show: false), minX: 0, maxX: spots.last.x, minY: 0, maxY: 7.5,
-              lineBarsData: [LineChartBarData(spots: spots, isCurved: true, color: _getLevelColor(playerLevel), barWidth: 4, dotData: FlDotData(show: true), belowBarData: BarAreaData(show: true, color: _getLevelColor(playerLevel).withOpacity(0.2)))]
+              lineBarsData: [LineChartBarData(spots: spots, isCurved: true, color: currentColor, barWidth: 3, dotData: FlDotData(show: true), belowBarData: BarAreaData(show: true, color: currentColor.withOpacity(0.15)))]
           ), duration: const Duration(milliseconds: 500)),
         ),
     ]);
   }
 
-  Widget _chartBtn(String text, int index) {
+  Widget _chartBtn(String text, int index, Color activeColor) {
     bool active = _selectedChartPeriod == index;
-    return GestureDetector(onTap: () => setState(() => _selectedChartPeriod = index), child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: active ? const Color(0xFF2F80ED) : Colors.transparent, borderRadius: BorderRadius.circular(8)), child: Text(text, style: TextStyle(color: active ? Colors.white : Colors.grey, fontWeight: FontWeight.bold, fontSize: 12))));
+    return GestureDetector(onTap: () => setState(() => _selectedChartPeriod = index), child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: active ? activeColor : Colors.transparent, borderRadius: BorderRadius.circular(8)), child: Text(text, style: TextStyle(color: active ? Colors.black : Colors.grey, fontWeight: FontWeight.bold, fontSize: 12))));
   }
 
-  // --- WIDGET: ИСТОРИЯ МАТЧЕЙ ---
+  // 🔥 ИСТОРИЯ МАТЧЕЙ (ПОЛНАЯ)
   Widget _buildHistorySection() {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Text("ИСТОРИЯ ИГР", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
@@ -454,4 +490,34 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
         }),
     ]);
   }
+}
+
+// --- ЭЛЕГАНТНЫЙ КЛИППЕР (ПЛАВНЫЕ ЛИНИИ) ---
+class ElegantShieldClipper extends CustomClipper<Path> {
+  @override
+  Path getClip(Size size) {
+    Path path = Path();
+    double w = size.width;
+    double h = size.height;
+    // Начало сверху слева (с отступом для закругления)
+    path.moveTo(w * 0.1, 0);
+    // Верхняя прямая линия
+    path.lineTo(w * 0.9, 0);
+    // Плавный верхний правый угол
+    path.quadraticBezierTo(w, 0, w, h * 0.1);
+    // Правая сторона вниз
+    path.lineTo(w, h * 0.65);
+    // Плавный изгиб вниз к центру (элегантное острие)
+    path.quadraticBezierTo(w, h * 0.9, w * 0.5, h);
+    // Плавный изгиб вверх от центра влево
+    path.quadraticBezierTo(0, h * 0.9, 0, h * 0.65);
+    // Левая сторона вверх
+    path.lineTo(0, h * 0.1);
+    // Плавный верхний левый угол
+    path.quadraticBezierTo(0, 0, w * 0.1, 0);
+    path.close();
+    return path;
+  }
+  @override
+  bool shouldReclip(CustomClipper<Path> oldClipper) => false;
 }

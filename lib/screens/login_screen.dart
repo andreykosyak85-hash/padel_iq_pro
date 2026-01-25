@@ -50,7 +50,7 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!canCheck) return true; // Если нет сканера, пропускаем
 
       return await _localAuth.authenticate(
-        localizedReason: 'Подтвердите вход в Padel MVP',
+        localizedReason: 'Подтвердите вход в Padel IQ Pro',
         options: const AuthenticationOptions(
           biometricOnly: true, 
           stickyAuth: true,
@@ -129,7 +129,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   Image.asset('assets/logo.png', height: 120), 
                   const SizedBox(height: 20),
                   const Text(
-                    "PADEL MVP",
+                    "PADEL IQ Pro",
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 32,
