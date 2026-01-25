@@ -6,7 +6,7 @@ class TournamentScreen extends StatefulWidget {
   final String title;
   final String matchId;
   final int courts;
-  final String gameType; // 'Americano (Ind)', 'Americano (Team)', 'Winner Court' и т.д.
+  final String gameType; // 'Americano', 'Mexicano', 'Classic'
 
   const TournamentScreen({
     super.key, 
@@ -42,6 +42,7 @@ class _TournamentScreenState extends State<TournamentScreen> with SingleTickerPr
 
   Future<void> _loadPlayersAndStart() async {
     try {
+      // Загружаем участников со статусом CONFIRMED
       final response = await supabase
           .from('participants')
           .select('user_id, profiles(username, email)')
@@ -52,6 +53,7 @@ class _TournamentScreenState extends State<TournamentScreen> with SingleTickerPr
       
       for (var record in response) {
         final profile = record['profiles'];
+        // Берем имя или часть email до @
         String name = profile['username'] ?? (profile['email'] as String).split('@')[0];
         loadedNames.add(name);
         scores[name] = 0;
@@ -62,10 +64,14 @@ class _TournamentScreenState extends State<TournamentScreen> with SingleTickerPr
         isLoading = false;
       });
 
-      // Добор ботов (чтобы кратно 4)
+      // Добор ботов (чтобы число игроков было кратно 4)
       int requiredPlayers = widget.courts * 4;
+      
+      // Если игроков меньше, чем нужно для кортов
       if (playersNames.length < requiredPlayers) {
-        if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Добавлено ${requiredPlayers - playersNames.length} ботов.")));
+        int botsNeeded = requiredPlayers - playersNames.length;
+        if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Добавлено $botsNeeded ботов для старта.")));
+        
         while (playersNames.length < requiredPlayers) {
           String botName = "Бот ${playersNames.length + 1}";
           playersNames.add(botName);
@@ -89,7 +95,7 @@ class _TournamentScreenState extends State<TournamentScreen> with SingleTickerPr
   void _createFixedTeams() {
     fixedTeams.clear();
     List<String> pool = List.from(playersNames);
-    // Можно добавить логику рандома или по рейтингу, пока просто по порядку
+    // Просто разбиваем по порядку (в идеале можно сделать драфт)
     for (int i = 0; i < pool.length; i += 2) {
       if (i + 1 < pool.length) {
         fixedTeams.add([pool[i], pool[i + 1]]);
@@ -97,7 +103,7 @@ class _TournamentScreenState extends State<TournamentScreen> with SingleTickerPr
     }
   }
 
-  // 🔥 МОЗГ ТУРНИРА: РАСПРЕДЕЛЕНИЕ 🔥
+  // 🔥 МОЗГ ТУРНИРА: ГЕНЕРАЦИЯ СЕТКИ 🔥
   void _generateRound() {
     if (isTournamentFinished) return;
 
@@ -109,14 +115,14 @@ class _TournamentScreenState extends State<TournamentScreen> with SingleTickerPr
         List<List<String>> teamsPool = List.from(fixedTeams);
         
         if (widget.gameType.contains('Mexicano')) {
-          // Мексикано Командное: Сортируем команды по сумме очков
+          // Мексикано Командное: Сортируем команды по сумме очков (Сильные с Сильными)
           teamsPool.sort((a, b) {
             int scoreA = scores[a[0]]! + scores[a[1]]!;
             int scoreB = scores[b[0]]! + scores[b[1]]!;
             return scoreB.compareTo(scoreA);
           });
         } else {
-          // Американо Командное: Рандом
+          // Американо Командное: Рандом (перемешиваем)
           teamsPool.shuffle();
         }
 
@@ -139,12 +145,11 @@ class _TournamentScreenState extends State<TournamentScreen> with SingleTickerPr
       else {
         List<String> pool = List.from(playersNames);
 
-        // A. Winner Court (Винер Корт) и Mexicano (Мексикано)
-        // Сортируем игроков по очкам: Лучшие играют на 1 корте
+        // A. Mexicano / Winner Court: Сортируем по очкам
         if (widget.gameType.contains('Mexicano') || widget.gameType.contains('Winner')) {
           pool.sort((a, b) => scores[b]!.compareTo(scores[a]!));
         } 
-        // B. Americano (Классика) - полный рандом
+        // B. Americano (Классика): Полный рандом (Mixer)
         else {
           pool.shuffle();
         }
@@ -161,11 +166,11 @@ class _TournamentScreenState extends State<TournamentScreen> with SingleTickerPr
 
           // Внутри корта пары формируются:
           if (widget.gameType.contains('Mexicano')) {
-             // 1+4 vs 2+3 (Уравнивание сил)
+             // Mexicano: 1+4 vs 2+3 (Уравнивание сил внутри матча)
              t1 = [p[0], p[3]];
              t2 = [p[1], p[2]];
           } else {
-             // Рандом/Winner: 1+2 vs 3+4
+             // Random/Winner: 1+2 vs 3+4
              t1 = [p[0], p[1]];
              t2 = [p[2], p[3]];
           }
@@ -196,22 +201,22 @@ class _TournamentScreenState extends State<TournamentScreen> with SingleTickerPr
         scores[p] = (scores[p] ?? 0) + s2;
       }
       
-      // Если "Super Mexicano" - бонус за победу на высоком корте (опционально)
-      if (widget.gameType.contains('Super')) {
-         int courtBonus = (widget.courts - (match['court'] as int) + 1) * 2; // Чем выше корт (1), тем больше бонус
-         if (s1 > s2) for (var p in match['team1']) {
-           scores[p] = scores[p]! + courtBonus;
+      // Логика "Winner Court" (Бонус за победу на 1 корте)
+      if (widget.gameType.contains('Winner') || widget.gameType.contains('Super')) {
+         int courtBonus = (widget.courts - (match['court'] as int) + 1) * 2; 
+         if (s1 > s2) {
+            for (var p in match['team1']) scores[p] = scores[p]! + courtBonus;
          }
-         if (s2 > s1) for (var p in match['team2']) {
-           scores[p] = scores[p]! + courtBonus;
+         if (s2 > s1) {
+            for (var p in match['team2']) scores[p] = scores[p]! + courtBonus;
          }
       }
     }
 
     setState(() => round++);
-    _generateRound();
-    _tabController.animateTo(1); 
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Раунд $round! Пары обновлены.")));
+    _generateRound(); // Генерируем следующий раунд
+    _tabController.animateTo(1); // Перекидываем на таблицу, чтобы посмотрели результаты
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Раунд $round! Пары обновлены."), backgroundColor: Colors.green));
   }
 
   void _finishTournamentEarly() {
@@ -219,7 +224,8 @@ class _TournamentScreenState extends State<TournamentScreen> with SingleTickerPr
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF161B22),
-        title: const Text("Завершить игру?", style: TextStyle(color: Colors.white)),
+        title: const Text("Завершить турнир?", style: TextStyle(color: Colors.white)),
+        content: const Text("Это действие нельзя отменить. Победитель будет объявлен.", style: TextStyle(color: Colors.grey)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text("Отмена", style: TextStyle(color: Colors.grey))),
           ElevatedButton(
@@ -227,7 +233,7 @@ class _TournamentScreenState extends State<TournamentScreen> with SingleTickerPr
             onPressed: () {
               setState(() { isTournamentFinished = true; });
               Navigator.pop(context);
-              _tabController.animateTo(1); 
+              _tabController.animateTo(1); // Идем к таблице победителей
             }, 
             child: const Text("Завершить", style: TextStyle(color: Colors.white))
           ),
@@ -254,7 +260,7 @@ class _TournamentScreenState extends State<TournamentScreen> with SingleTickerPr
         iconTheme: const IconThemeData(color: Colors.white),
         actions: [
           if (!isTournamentFinished) 
-            IconButton(icon: const Icon(Icons.stop_circle_outlined, color: Colors.redAccent), onPressed: _finishTournamentEarly)
+            IconButton(icon: const Icon(Icons.flag, color: Colors.redAccent), onPressed: _finishTournamentEarly)
         ],
         bottom: TabBar(
           controller: _tabController, 
@@ -269,17 +275,26 @@ class _TournamentScreenState extends State<TournamentScreen> with SingleTickerPr
         children: [
           // ЭКРАН МАТЧЕЙ (ВВОД СЧЕТА)
           isTournamentFinished 
-            ? Center(child: ElevatedButton(onPressed: () => _tabController.animateTo(1), child: const Text("Смотреть результаты")))
+            ? Center(child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                   const Icon(Icons.emoji_events, size: 80, color: Colors.amber),
+                   const SizedBox(height: 20),
+                   const Text("Турнир завершен!", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                   const SizedBox(height: 20),
+                   ElevatedButton(onPressed: () => _tabController.animateTo(1), child: const Text("Смотреть результаты"))
+                ],
+              ))
             : ListView(padding: const EdgeInsets.all(16), children: [
                 ...currentMatches.map((m) => _buildMatchCard(m)),
                 const SizedBox(height: 20),
                 SizedBox(
                   width: double.infinity,
-                  height: 50,
+                  height: 55,
                   child: ElevatedButton(
                     onPressed: _finishRound, 
                     style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF238636), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))), 
-                    child: const Text("Завершить раунд", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold))
+                    child: const Text("Завершить раунд", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold))
                   ),
                 )
               ]),
@@ -325,6 +340,7 @@ class _TournamentScreenState extends State<TournamentScreen> with SingleTickerPr
     decoration: BoxDecoration(color: const Color(0xFF0D1117), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white24)),
     child: Center(
       child: TextField(
+        // Используем уникальный ключ, чтобы Flutter не путал поля при смене раундов
         key: ValueKey("R${round}_${m['court']}_$k"),
         keyboardType: TextInputType.number,
         style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold), 
@@ -336,25 +352,39 @@ class _TournamentScreenState extends State<TournamentScreen> with SingleTickerPr
   );
 
   Widget _buildLeaderboard() {
+    // Сортируем игроков от большего к меньшему
     var sorted = scores.keys.toList()..sort((a, b) => scores[b]!.compareTo(scores[a]!));
+    
     return ListView.builder(
       padding: const EdgeInsets.all(16),
       itemCount: sorted.length, 
       itemBuilder: (c, i) {
         String name = sorted[i];
         int score = scores[name]!;
-        Color rankColor = i == 0 ? Colors.yellow : (i == 1 ? Colors.grey : (i == 2 ? Colors.orangeAccent : Colors.white));
+        
+        // Золото, Серебро, Бронза
+        Color rankColor = Colors.white;
+        IconData? icon;
+        if (i == 0) { rankColor = const Color(0xFFF2C94C); icon = Icons.emoji_events; }
+        else if (i == 1) { rankColor = Colors.grey[400]!; }
+        else if (i == 2) { rankColor = Colors.orangeAccent; }
         
         return Container(
           margin: const EdgeInsets.only(bottom: 10),
-          decoration: BoxDecoration(color: const Color(0xFF161B22), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white.withOpacity(0.05))),
+          decoration: BoxDecoration(
+            color: const Color(0xFF161B22), 
+            borderRadius: BorderRadius.circular(12), 
+            border: i == 0 ? Border.all(color: const Color(0xFFF2C94C), width: 1) : Border.all(color: Colors.white.withOpacity(0.05))
+          ),
           child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: Colors.transparent,
-              child: Text("#${i + 1}", style: TextStyle(color: rankColor, fontWeight: FontWeight.bold, fontSize: 18)),
+            leading: SizedBox(
+              width: 40,
+              child: icon != null 
+                ? Icon(icon, color: rankColor) 
+                : Text("#${i + 1}", style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 18)),
             ),
-            title: Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            trailing: Text("$score", style: const TextStyle(color: Color(0xFF2F80ED), fontSize: 24, fontWeight: FontWeight.bold)),
+            title: Text(name, style: TextStyle(color: rankColor == Colors.white ? Colors.white : rankColor, fontWeight: FontWeight.bold)),
+            trailing: Text("$score pts", style: const TextStyle(color: Color(0xFF2F80ED), fontSize: 20, fontWeight: FontWeight.bold)),
           ),
         );
       }

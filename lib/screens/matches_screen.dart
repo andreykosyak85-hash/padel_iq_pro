@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../main.dart'; 
-import 'chat_screen.dart';
-import 'tournament_screen.dart';
-import 'profile_screen.dart'; 
+import '../main.dart'; // Доступ к supabase
+import 'tournament_screen.dart'; // Импорт экрана турнира
 
 class MatchesScreen extends StatefulWidget {
   const MatchesScreen({super.key});
@@ -13,147 +11,171 @@ class MatchesScreen extends StatefulWidget {
 }
 
 class _MatchesScreenState extends State<MatchesScreen> {
-  // --- ДАННЫЕ ПРОФИЛЯ ---
-  double myRating = 3.0;
-  String myName = "Загрузка...";
-  String? myAvatarUrl;
-  
-  Map<String, dynamic> myStats = {
-    'SMA': 3.0, 'DEF': 3.0, 'TAC': 3.0, 
-    'VOL': 3.0, 'LOB': 3.0, 'PHY': 3.0
-  };
+  // --- ЦВЕТА DARK THEME ---
+  final Color _bgDark = const Color(0xFF0D1117);
+  final Color _cardColor = const Color(0xFF161B22);
+  final Color _primaryBlue = const Color(0xFF2F80ED);
+  final Color _textWhite = Colors.white;
+  final Color _textGrey = Colors.grey;
+
+  late final Stream<List<Map<String, dynamic>>> _matchesStream;
 
   @override
   void initState() {
     super.initState();
-    _loadUserProfile();
-  }
-
-  Future<void> _loadUserProfile() async {
-    try {
-      final userId = supabase.auth.currentUser!.id;
-      final data = await supabase.from('profiles').select().eq('id', userId).single();
-      
-      if (mounted) {
-        setState(() {
-          myRating = (data['rating'] as num).toDouble();
-          myName = data['username'] ?? "Игрок";
-          myAvatarUrl = data['avatar_url'];
-          if (data['stats'] != null) {
-            myStats = data['stats'];
-          }
-        });
-      }
-    } catch (e) {
-      debugPrint("Ошибка загрузки профиля: $e");
-    }
-  }
-
-  // --- ЛОГИКА СОЗДАНИЯ МАТЧА ---
-  Future<void> _createMatchInCloud({
-    required String title,
-    required String type,
-    required int courts,
-    required double minRating,
-    required double maxRating,
-    required bool isPublic,
-  }) async {
-    try {
-      final userId = supabase.auth.currentUser!.id;
-      
-      // 1. Создаем матч
-      final matchResponse = await supabase.from('matches').insert({
-        'creator_id': userId,
-        'title': title,
-        'type': type,
-        'status': 'OPEN',
-        'courts_count': courts,
-        'min_rating': minRating,
-        'max_rating': maxRating,
-        'is_public': isPublic,
-        'start_time': DateTime.now().add(const Duration(days: 1)).toIso8601String(), 
-      }).select().single();
-
-      // 2. Автор сразу записывается
-      await supabase.from('participants').insert({
-        'match_id': matchResponse['id'],
-        'user_id': userId,
-        'status': 'CONFIRMED'
-      });
-
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Игра создана!")));
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Ошибка создания: $e")));
-    }
+    _matchesStream = supabase
+        .from('matches')
+        .stream(primaryKey: ['id'])
+        .order('start_time', ascending: true)
+        .map((data) => data.where((m) => m['status'] != 'FINISHED').toList());
   }
 
   @override
   Widget build(BuildContext context) {
-    // СТРИМ МАТЧЕЙ
-    final Stream<List<Map<String, dynamic>>> matchesStream = supabase
-        .from('matches')
-        .stream(primaryKey: ['id'])
-        .order('created_at', ascending: false);
-
     return Scaffold(
-      backgroundColor: const Color(0xFF0D1117), // Темный фон
-      
-      floatingActionButton: FloatingActionButton(
-        onPressed: _showCreateMatchDialog,
-        backgroundColor: const Color(0xFF2F80ED),
-        child: const Icon(Icons.add, color: Colors.white),
-      ),
-      
-      bottomNavigationBar: BottomNavigationBar(
-        backgroundColor: const Color(0xFF161B22),
-        selectedItemColor: const Color(0xFF2F80ED),
-        unselectedItemColor: Colors.grey,
-        currentIndex: 0,
-        onTap: (index) {
-          if (index == 2) {
-             Navigator.push(context, MaterialPageRoute(builder: (c) => const ProfileScreen()))
-             .then((_) => _loadUserProfile());
-          }
-          if (index == 1) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Бронь скоро!")));
-        },
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.sports_tennis), label: 'Матчи'),
-          BottomNavigationBarItem(icon: Icon(Icons.calendar_today), label: 'Бронь'),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Профиль'),
+      backgroundColor: _bgDark,
+      appBar: AppBar(
+        backgroundColor: _bgDark,
+        elevation: 0,
+        title: Text("Матчи", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 24, color: _textWhite)),
+        actions: [
+          IconButton(icon: Icon(Icons.filter_list, color: _textWhite), onPressed: () {}),
         ],
       ),
+      
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: _primaryBlue,
+        child: const Icon(Icons.add, color: Colors.white, size: 30),
+        onPressed: () => _showCreateMatchSheet(context),
+      ),
 
-      body: SingleChildScrollView(
+      body: StreamBuilder<List<Map<String, dynamic>>>(
+        stream: _matchesStream,
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+          final matches = snapshot.data!;
+
+          if (matches.isEmpty) {
+            return Center(child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.sports_tennis, size: 60, color: _cardColor),
+                const SizedBox(height: 10),
+                Text("Нет активных матчей", style: TextStyle(color: _textGrey)),
+              ],
+            ));
+          }
+
+          return ListView.separated(
+            padding: const EdgeInsets.all(16),
+            itemCount: matches.length,
+            separatorBuilder: (c, i) => const SizedBox(height: 16),
+            itemBuilder: (context, index) {
+              return _buildMatchCard(matches[index]);
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildMatchCard(Map<String, dynamic> match) {
+    bool isCompetitive = match['is_competitive'] ?? true;
+    String type = match['type'] ?? 'Classic';
+    int courts = match['courts_count'] ?? 1;
+    int maxP = match['max_players'] ?? 4;
+    // Берем только подтвержденных для отображения в списке (чтобы не путать с листом ожидания)
+    int currentP = match['players_count'] ?? 0; 
+    
+    double minLvl = (match['level_min'] as num?)?.toDouble() ?? 1.0;
+    double maxLvl = (match['level_max'] as num?)?.toDouble() ?? 7.0;
+
+    DateTime date = DateTime.tryParse(match['start_time']) ?? DateTime.now();
+    String dateStr = "${date.day}.${date.month}";
+    String timeStr = "${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}";
+    int price = (match['price'] as num?)?.toInt() ?? 0;
+
+    return GestureDetector(
+      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (c) => MatchLobbyScreen(match: match))),
+      child: Container(
+        decoration: BoxDecoration(color: _cardColor, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 20),
-            _buildPremiumCard(), 
-            const SizedBox(height: 30),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20),
-              child: Align(alignment: Alignment.centerLeft, child: Text("Ближайшие игры (LIVE)", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold))),
+            // Картинка
+            Container(
+              height: 100,
+              decoration: const BoxDecoration(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                image: DecorationImage(
+                  image: NetworkImage("https://images.unsplash.com/photo-1554068865-2414cd956c40?q=80&w=1000&auto=format&fit=crop"), 
+                  fit: BoxFit.cover, colorFilter: ColorFilter.mode(Colors.black45, BlendMode.darken)
+                ),
+              ),
+              child: Stack(
+                children: [
+                  Positioned(
+                    top: 10, right: 10,
+                    child: Row(
+                      children: [
+                        _badge(_primaryBlue, type),
+                        const SizedBox(width: 5),
+                        _badge(Colors.black.withOpacity(0.7), "$courts корт(а)"),
+                        const SizedBox(width: 5),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(color: Colors.black.withOpacity(0.7), borderRadius: BorderRadius.circular(20)),
+                          child: Row(children: [
+                            Icon(isCompetitive ? Icons.emoji_events : Icons.handshake, color: isCompetitive ? const Color(0xFFF2C94C) : Colors.white, size: 12),
+                          ]),
+                        ),
+                      ],
+                    ),
+                  )
+                ],
+              ),
             ),
             
-            StreamBuilder<List<Map<String, dynamic>>>(
-              stream: matchesStream,
-              builder: (context, snapshot) {
-                if (snapshot.hasError) return Padding(padding: const EdgeInsets.all(20), child: Text("Ошибка: ${snapshot.error}", style: const TextStyle(color: Colors.red)));
-                if (!snapshot.hasData) return const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()));
-                
-                final matches = snapshot.data!;
-                if (matches.isEmpty) return const Padding(padding: EdgeInsets.all(20), child: Text("Нет игр", style: TextStyle(color: Colors.grey)));
-
-                return ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: matches.length,
-                  itemBuilder: (context, index) => MatchCardWidget(
-                    key: ValueKey(matches[index]['id']), // Важно для обновления состояния
-                    match: matches[index]
-                  ), 
-                );
-              },
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(child: Text(match['title'] ?? "Матч", style: TextStyle(color: _textWhite, fontWeight: FontWeight.bold, fontSize: 18), overflow: TextOverflow.ellipsis)),
+                      Text("$price€", style: TextStyle(color: _textWhite, fontWeight: FontWeight.bold, fontSize: 18)),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  
+                  Row(
+                    children: [
+                      Icon(Icons.calendar_month, size: 16, color: _primaryBlue),
+                      const SizedBox(width: 5),
+                      Text("$dateStr, $timeStr", style: TextStyle(color: _textWhite, fontWeight: FontWeight.w600)),
+                      const Spacer(),
+                      Icon(Icons.bar_chart, size: 16, color: _textGrey),
+                      const SizedBox(width: 5),
+                      Text("${minLvl.toStringAsFixed(1)} - ${maxLvl.toStringAsFixed(1)}", style: TextStyle(color: _textGrey, fontSize: 12, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: maxP > 0 ? currentP / maxP : 0,
+                      backgroundColor: Colors.white10,
+                      color: currentP >= maxP ? Colors.redAccent : const Color(0xFF00E676),
+                      minHeight: 4,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Align(alignment: Alignment.centerRight, child: Text("$currentP / $maxP игроков", style: TextStyle(color: _textGrey, fontSize: 10))),
+                ],
+              ),
             ),
           ],
         ),
@@ -161,138 +183,126 @@ class _MatchesScreenState extends State<MatchesScreen> {
     );
   }
 
-  Widget _buildPremiumCard() {
-    return GestureDetector(
-      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (c) => const ProfileScreen())).then((_) => _loadUserProfile()),
-      child: Center(
-        child: Container(
-          width: 320, height: 480,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(colors: [Color(0xFF6EC1E4), Color(0xFF2F80ED)], begin: Alignment.topCenter, end: Alignment.bottomCenter),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: Colors.white, width: 2),
-            boxShadow: [BoxShadow(color: Colors.blue.withOpacity(0.4), blurRadius: 20, offset: const Offset(0, 10))]
-          ),
-          child: Stack(
-            children: [
-              Positioned(top: 40, left: 30, child: Text(myRating.toStringAsFixed(2), style: const TextStyle(fontSize: 56, fontWeight: FontWeight.bold, color: Colors.black87))),
-              if (myAvatarUrl == null) const Positioned(top: 140, left: 0, right: 0, child: Center(child: Icon(Icons.camera_alt_outlined, size: 60, color: Colors.black12))),
-              if (myAvatarUrl != null) Positioned.fill(child: ClipRRect(borderRadius: BorderRadius.circular(22), child: Image.network(myAvatarUrl!, fit: BoxFit.cover, color: Colors.black.withOpacity(0.1), colorBlendMode: BlendMode.darken))),
-              Positioned(bottom: 140, left: 0, right: 0, child: Center(child: Text(myName.toUpperCase(), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.black87)))),
-              Positioned(bottom: 40, left: 30, right: 30, child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [_statRow("VOL", myStats['VOL']), _statRow("LOB", myStats['LOB']), _statRow("PHY", myStats['PHY']),]),
-                    Column(crossAxisAlignment: CrossAxisAlignment.end, children: [_statRow("SMA", myStats['SMA'], alignRight: true), _statRow("DEF", myStats['DEF'], alignRight: true), _statRow("TAC", myStats['TAC'], alignRight: true),]),
-                  ])),
-            ],
-          ),
-        ),
-      ),
+  Widget _badge(Color color, String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(20)),
+      child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
     );
   }
 
-  Widget _statRow(String label, dynamic val, {bool alignRight = false}) {
-    double value = (val is num) ? val.toDouble() : 3.0;
-    List<Widget> children = [Text(value.toStringAsFixed(1), style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16, color: Colors.black87)), const SizedBox(width: 6), Text(label, style: const TextStyle(fontSize: 14, color: Colors.black54))];
-    if (alignRight) children = children.reversed.toList();
-    return Padding(padding: const EdgeInsets.only(bottom: 4), child: Row(children: children));
-  }
-
-  // 🔥 ДИАЛОГ СОЗДАНИЯ ИГРЫ 🔥
-  void _showCreateMatchDialog() {
-    String title = 'Игра ${DateTime.now().day}.${DateTime.now().month}';
+  void _showCreateMatchSheet(BuildContext context) {
+    bool isCompetitive = true;
+    String title = "";
+    double price = 0;
+    final List<String> formats = ['Classic', 'Americano', 'Americano (Team)', 'Americano (Mixed)', 'Mexicano', 'Mexicano (Team)', 'Super Mexicano', 'Winner Court', 'Tournament'];
     String selectedFormat = 'Americano'; 
-    int selectedCourts = 1;
-    int maxPlayers = 4;
-    RangeValues currentRange = const RangeValues(1.0, 7.0);
-    bool isPublic = true;
+    int courts = 1;
+    RangeValues levelRange = const RangeValues(1.0, 7.0);
+    DateTime selectedDateTime = DateTime.now().add(const Duration(hours: 1));
+    bool isLoading = false;
 
-    final List<String> gameTypes = [
-      'Match (Classic)', 'Americano', 'Americano (Team)', 'Americano (Mixed)',
-      'Mexicano', 'Mexicano (Team)', 'Super Mexicano', 'Winner Court', 'Tournament (Cup)',
-    ];
-
-    showDialog(
+    showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
+      backgroundColor: _cardColor,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (context) {
         return StatefulBuilder(
-          builder: (context, setDialogState) {
-            if (selectedFormat == 'Match (Classic)') maxPlayers = 4;
+          builder: (context, setSheetState) {
+            
+            Future<void> pickDateTime() async {
+              final DateTime? date = await showDatePicker(
+                context: context, initialDate: selectedDateTime, firstDate: DateTime.now(), lastDate: DateTime(2100),
+                builder: (context, child) => Theme(data: ThemeData.dark(), child: child!)
+              );
+              if (date == null) return;
+              final TimeOfDay? time = await showTimePicker(
+                context: context, initialTime: TimeOfDay.fromDateTime(selectedDateTime),
+                builder: (context, child) => Theme(data: ThemeData.dark(), child: child!)
+              );
+              if (time == null) return;
+              setSheetState(() => selectedDateTime = DateTime(date.year, date.month, date.day, time.hour, time.minute));
+            }
 
-            return AlertDialog(
-              backgroundColor: const Color(0xFF161B22), 
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              title: const Text('Создать игру', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(labelText: 'Название', labelStyle: TextStyle(color: Colors.grey), filled: true, fillColor: Color(0xFF0D1117)),
-                      onChanged: (val) => title = val,
-                    ),
-                    const SizedBox(height: 20),
-                    DropdownButtonFormField<String>(
-                      initialValue: selectedFormat,
-                      dropdownColor: const Color(0xFF161B22),
-                      style: const TextStyle(color: Colors.white),
-                      isExpanded: true,
-                      decoration: const InputDecoration(labelText: "Формат", labelStyle: TextStyle(color: Colors.grey), filled: true, fillColor: Color(0xFF0D1117)),
-                      items: gameTypes.map((v) => DropdownMenuItem(value: v, child: Text(v, overflow: TextOverflow.ellipsis))).toList(),
-                      onChanged: (val) => setDialogState(() {
-                        selectedFormat = val!;
-                        if (selectedFormat == 'Match (Classic)') { selectedCourts = 1; maxPlayers = 4; } 
-                        else { maxPlayers = selectedCourts * 4; }
-                      }),
-                    ),
-                    const SizedBox(height: 20),
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(color: const Color(0xFF0D1117), borderRadius: BorderRadius.circular(10)),
-                      child: Column(
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text("Корты:", style: TextStyle(color: Colors.white, fontSize: 16)),
-                              Row(
-                                children: [
-                                  IconButton(icon: const Icon(Icons.remove_circle, color: Color(0xFF2F80ED)), onPressed: () => setDialogState(() { if (selectedCourts > 1) { selectedCourts--; maxPlayers = selectedCourts * 4; } })),
-                                  Text('$selectedCourts', style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                                  IconButton(icon: const Icon(Icons.add_circle, color: Color(0xFF2F80ED)), onPressed: () => setDialogState(() { selectedCourts++; maxPlayers = selectedCourts * 4; })),
-                                ],
-                              ),
-                            ],
-                          ),
-                          const Divider(color: Colors.grey),
-                          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                              const Text("Участников:", style: TextStyle(color: Colors.grey)),
-                              Text("$maxPlayers", style: const TextStyle(color: Color(0xFF2F80ED), fontWeight: FontWeight.bold, fontSize: 16)),
-                            ])
-                        ],
+            return Padding(
+              padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(context).viewInsets.bottom + 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(child: Container(width: 40, height: 4, color: Colors.grey[600], margin: const EdgeInsets.only(bottom: 20))),
+                  Center(child: Text("Создать матч", style: TextStyle(color: _textWhite, fontSize: 20, fontWeight: FontWeight.bold))),
+                  const SizedBox(height: 20),
+                  
+                  Row(children: [
+                    Expanded(child: GestureDetector(onTap: () => setSheetState(() => isCompetitive = true), child: Container(padding: const EdgeInsets.symmetric(vertical: 12), decoration: BoxDecoration(color: isCompetitive ? _primaryBlue.withOpacity(0.2) : Colors.transparent, borderRadius: BorderRadius.circular(10), border: Border.all(color: isCompetitive ? _primaryBlue : Colors.white10)), child: Center(child: Text("Ranked", style: TextStyle(color: isCompetitive ? _primaryBlue : Colors.grey, fontWeight: FontWeight.bold)))))), 
+                    const SizedBox(width: 10),
+                    Expanded(child: GestureDetector(onTap: () => setSheetState(() => isCompetitive = false), child: Container(padding: const EdgeInsets.symmetric(vertical: 12), decoration: BoxDecoration(color: !isCompetitive ? Colors.white.withOpacity(0.1) : Colors.transparent, borderRadius: BorderRadius.circular(10), border: Border.all(color: !isCompetitive ? Colors.white : Colors.white10)), child: Center(child: Text("Friendly", style: TextStyle(color: !isCompetitive ? Colors.white : Colors.grey, fontWeight: FontWeight.bold)))))),
+                  ]),
+                  
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text("Формат", style: TextStyle(color: _textGrey, fontSize: 12)), const SizedBox(height: 5),
+                            Container(padding: const EdgeInsets.symmetric(horizontal: 12), decoration: BoxDecoration(color: _bgDark, borderRadius: BorderRadius.circular(12)), child: DropdownButtonHideUnderline(child: DropdownButton<String>(value: selectedFormat, dropdownColor: _cardColor, style: TextStyle(color: _textWhite, fontSize: 14), isExpanded: true, items: formats.map((f) => DropdownMenuItem(value: f, child: Text(f, overflow: TextOverflow.ellipsis))).toList(), onChanged: (val) => setSheetState(() => selectedFormat = val!)))),
+                          ]),
                       ),
+                      const SizedBox(width: 15),
+                      Expanded(
+                        flex: 1,
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text("Корты", style: TextStyle(color: _textGrey, fontSize: 12)), const SizedBox(height: 5),
+                            Container(height: 48, decoration: BoxDecoration(color: _bgDark, borderRadius: BorderRadius.circular(12)), child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [InkWell(onTap: () => setSheetState(() { if (courts > 1) courts--; }), child: Icon(Icons.remove, color: _textGrey, size: 20)), Text("$courts", style: TextStyle(color: _textWhite, fontWeight: FontWeight.bold, fontSize: 16)), InkWell(onTap: () => setSheetState(() => courts++), child: Icon(Icons.add, color: _primaryBlue, size: 20))])),
+                          ]),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 20),
+                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text("Уровень (NTRP)", style: TextStyle(color: _textGrey, fontSize: 12)), Text("${levelRange.start.toStringAsFixed(1)} - ${levelRange.end.toStringAsFixed(1)}", style: TextStyle(color: _primaryBlue, fontWeight: FontWeight.bold))]),
+                  RangeSlider(values: levelRange, min: 1.0, max: 7.0, divisions: 12, activeColor: _primaryBlue, inactiveColor: _bgDark, labels: RangeLabels(levelRange.start.toStringAsFixed(1), levelRange.end.toStringAsFixed(1)), onChanged: (val) => setSheetState(() => levelRange = val)),
+
+                  const SizedBox(height: 10),
+                  Text("Дата и время", style: TextStyle(color: _textGrey, fontSize: 12)), const SizedBox(height: 5),
+                  GestureDetector(
+                    onTap: pickDateTime,
+                    child: Container(padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 15), decoration: BoxDecoration(color: _bgDark, borderRadius: BorderRadius.circular(12)), child: Row(children: [Icon(Icons.calendar_month, color: _primaryBlue), const SizedBox(width: 10), Text("${selectedDateTime.day}.${selectedDateTime.month}.${selectedDateTime.year}  |  ${selectedDateTime.hour.toString().padLeft(2,'0')}:${selectedDateTime.minute.toString().padLeft(2,'0')}", style: TextStyle(color: _textWhite, fontSize: 16, fontWeight: FontWeight.bold)), const Spacer(), Icon(Icons.edit, color: _textGrey, size: 16)])),
+                  ),
+
+                  const SizedBox(height: 15),
+                  Row(children: [
+                      Expanded(flex: 2, child: TextField(style: TextStyle(color: _textWhite), decoration: InputDecoration(labelText: "Название", labelStyle: TextStyle(color: _textGrey), filled: true, fillColor: _bgDark, border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none)), onChanged: (v) => title = v)),
+                      const SizedBox(width: 10),
+                      Expanded(flex: 1, child: TextField(style: TextStyle(color: _textWhite), decoration: InputDecoration(labelText: "Цена (€)", labelStyle: TextStyle(color: _textGrey), filled: true, fillColor: _bgDark, border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none)), keyboardType: TextInputType.number, onChanged: (v) => price = double.tryParse(v) ?? 0)),
+                    ]),
+                  
+                  const SizedBox(height: 25),
+                  SizedBox(
+                    width: double.infinity, height: 50,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: _primaryBlue, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                      onPressed: isLoading ? null : () async {
+                        setSheetState(() => isLoading = true);
+                        try {
+                          final uid = supabase.auth.currentUser?.id;
+                          if (uid == null) throw "Нужен вход";
+                          await supabase.from('matches').insert({
+                            'creator_id': uid, 'title': title.isEmpty ? "Match" : title, 'is_competitive': isCompetitive, 'price': price, 'type': selectedFormat, 'courts_count': courts, 'level_min': levelRange.start, 'level_max': levelRange.end, 'players_count': 0, 'max_players': courts * 4, 'status': 'OPEN', 'start_time': selectedDateTime.toIso8601String(),
+                          });
+                          if(context.mounted) { Navigator.pop(context); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Матч создан!"), backgroundColor: Colors.green)); }
+                        } catch(e) {
+                          if(context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Ошибка: $e"), backgroundColor: Colors.red));
+                        } finally { if(mounted) setSheetState(() => isLoading = false); }
+                      },
+                      child: isLoading ? const CircularProgressIndicator(color: Colors.white) : const Text("Создать", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
                     ),
-                    const SizedBox(height: 10),
-                    RangeSlider(
-                      values: currentRange, min: 1.0, max: 7.0, divisions: 12, activeColor: const Color(0xFF2F80ED),
-                      labels: RangeLabels(currentRange.start.toStringAsFixed(1), currentRange.end.toStringAsFixed(1)),
-                      onChanged: (val) => setDialogState(() => currentRange = val),
-                    ),
-                    SwitchListTile(title: const Text("Публичная", style: TextStyle(color: Colors.white)), value: isPublic, activeThumbColor: const Color(0xFF2F80ED), onChanged: (val) => setDialogState(() => isPublic = val))
-                  ],
-                ),
+                  )
+                ],
               ),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена', style: TextStyle(color: Colors.grey))),
-                ElevatedButton(
-                  onPressed: () {
-                    _createMatchInCloud(title: title, type: selectedFormat, courts: selectedCourts, minRating: currentRange.start, maxRating: currentRange.end, isPublic: isPublic);
-                    Navigator.pop(context);
-                  },
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2F80ED)),
-                  child: const Text('Создать', style: TextStyle(color: Colors.white)),
-                ),
-              ],
             );
           },
         );
@@ -301,215 +311,239 @@ class _MatchesScreenState extends State<MatchesScreen> {
   }
 }
 
-// 🔥 ИСПРАВЛЕННАЯ КАРТОЧКА МАТЧА 🔥
-class MatchCardWidget extends StatefulWidget {
+// --- ЛОББИ С WAITLIST, УДАЛЕНИЕМ И КОРТАМИ ---
+class MatchLobbyScreen extends StatefulWidget {
   final Map<String, dynamic> match;
-  const MatchCardWidget({super.key, required this.match});
-
+  const MatchLobbyScreen({super.key, required this.match});
   @override
-  State<MatchCardWidget> createState() => _MatchCardWidgetState();
+  State<MatchLobbyScreen> createState() => _MatchLobbyScreenState();
 }
 
-class _MatchCardWidgetState extends State<MatchCardWidget> {
-  String? myStatus; 
+class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
+  final Color _bgDark = const Color(0xFF0D1117);
+  final Color _cardColor = const Color(0xFF161B22);
+  final Color _primaryBlue = const Color(0xFF2F80ED);
+  
+  List<Map<String, dynamic>> confirmedPlayers = [];
+  List<Map<String, dynamic>> waitingList = [];
   bool isCreator = false;
-  int participantsCount = 0;
-  bool isLoading = false;
 
   @override
   void initState() {
     super.initState();
-    _checkStatus();
+    _checkCreator();
+    _loadParticipants();
   }
 
-  @override
-  void didUpdateWidget(covariant MatchCardWidget oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.match != widget.match) {
-      _checkStatus();
-    }
+  void _checkCreator() {
+    final uid = supabase.auth.currentUser?.id;
+    if (uid == widget.match['creator_id']) setState(() => isCreator = true);
   }
 
-  Future<void> _checkStatus() async {
-    final userId = supabase.auth.currentUser!.id;
-    final matchId = widget.match['id'];
-    
-    if (widget.match['creator_id'] == userId) {
-      if(mounted) setState(() => isCreator = true);
-    }
-
-    final response = await supabase.from('participants').select().eq('match_id', matchId);
-    final participants = response as List;
-
+  Future<void> _loadParticipants() async {
+    final res = await supabase.from('participants').select('user_id, status, profiles(username, level, avatar_url)').eq('match_id', widget.match['id']);
     if(mounted) {
       setState(() {
-        participantsCount = participants.where((p) => p['status'] == 'CONFIRMED').length;
-        // Ищем себя в списке для обновления кнопки
-        try {
-          final me = participants.firstWhere((p) => p['user_id'] == userId);
-          myStatus = me['status'];
-        } catch (e) {
-          myStatus = null; // Не найден - значит не записан
-        }
+        // Разделяем на Основу и Лист Ожидания
+        var all = List<Map<String, dynamic>>.from(res);
+        confirmedPlayers = all.where((p) => p['status'] == 'CONFIRMED').toList();
+        waitingList = all.where((p) => p['status'] == 'WAITING').toList();
       });
+      // Обновляем счетчик ТОЛЬКО подтвержденных
+      await supabase.from('matches').update({'players_count': confirmedPlayers.length}).eq('id', widget.match['id']);
     }
   }
 
-  // ВХОД / ВЫХОД
-  Future<void> _handleJoinOrLeave() async {
-    setState(() => isLoading = true);
-    final userId = supabase.auth.currentUser!.id;
-    final matchId = widget.match['id'];
-    int maxPlayers = (widget.match['courts_count'] ?? 1) * 4;
-
+  Future<void> _joinSlot() async {
     try {
-      if (myStatus == 'CONFIRMED' || myStatus == 'WAITING') {
-        // --- ВЫХОД ---
-        final startTime = DateTime.parse(widget.match['start_time']);
-        final difference = startTime.difference(DateTime.now()).inHours;
+      final uid = supabase.auth.currentUser!.id;
+      // Проверяем где игрок (в основе или в листе)
+      final inConfirmed = confirmedPlayers.any((p) => p['user_id'] == uid);
+      final inWaiting = waitingList.any((p) => p['user_id'] == uid);
 
-        if (difference < 5) {
-          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Менее 5 часов. Отмена через админа."), backgroundColor: Colors.red));
-          setState(() => isLoading = false);
-          return;
-        }
-
-        await supabase.from('participants').delete().eq('match_id', matchId).eq('user_id', userId);
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Вы вышли.")));
-        
-        // Сбрасываем статус локально сразу, чтобы кнопка обновилась
-        setState(() { myStatus = null; });
-        
+      if (inConfirmed || inWaiting) {
+        // Если уже где-то есть - удаляем (выход)
+        await supabase.from('participants').delete().eq('match_id', widget.match['id']).eq('user_id', uid);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Вы покинули игру")));
       } else {
-        // --- ВХОД ---
-        String status = participantsCount >= maxPlayers ? 'WAITING' : 'CONFIRMED';
+        // Если не записан - пытаемся войти
+        int maxP = widget.match['max_players'] ?? 4;
+        String status = 'CONFIRMED';
         
-        try {
-          await supabase.from('participants').insert({'match_id': matchId, 'user_id': userId, 'status': status});
-          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(status == 'WAITING' ? "В листе ожидания" : "Вы записаны!")));
-          setState(() { myStatus = status; });
-        } on PostgrestException catch (e) {
-          // 🔥 ИСПРАВЛЕНИЕ: ЛОВИМ ОШИБКУ "УЖЕ ЗАПИСАН" (23505)
-          if (e.code == '23505') {
-             if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Вы уже записаны на эту игру"), backgroundColor: Colors.green));
-             _checkStatus(); // Просто обновляем статус
-          } else {
-             if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Ошибка: ${e.message}"), backgroundColor: Colors.red));
-          }
+        // Если мест нет - идем в WAITING
+        if (confirmedPlayers.length >= maxP) {
+          status = 'WAITING';
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Мест нет. Вы добавлены в Лист Ожидания."), backgroundColor: Colors.orange));
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Вы записаны!"), backgroundColor: Colors.green));
         }
+
+        await supabase.from('participants').insert({'match_id': widget.match['id'], 'user_id': uid, 'status': status});
       }
-      await _checkStatus();
-    } catch (e) {
-      debugPrint("Error: $e");
-    } finally {
-      if(mounted) setState(() => isLoading = false);
+      _loadParticipants();
+    } catch(e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Ошибка: $e"), backgroundColor: Colors.red));
     }
   }
 
   Future<void> _deleteMatch() async {
-    try {
-      final matchId = widget.match['id'];
-      await supabase.from('participants').delete().eq('match_id', matchId);
-      await supabase.from('matches').delete().eq('id', matchId);
-      if(mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Матч удален")));
-    } catch (e) {
-      if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Ошибка: $e")));
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        backgroundColor: _cardColor,
+        title: const Text("Удалить игру?", style: TextStyle(color: Colors.white)),
+        content: const Text("Все участники будут удалены.", style: TextStyle(color: Colors.grey)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text("Отмена", style: TextStyle(color: Colors.grey))),
+          TextButton(onPressed: () => Navigator.pop(c, true), child: const Text("Удалить", style: TextStyle(color: Colors.redAccent))),
+        ],
+      )
+    );
+
+    if (confirm == true) {
+      try {
+        await supabase.from('participants').delete().eq('match_id', widget.match['id']);
+        await supabase.from('matches').delete().eq('id', widget.match['id']);
+        if (mounted) Navigator.pop(context);
+      } catch (e) {
+        if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Ошибка удаления: $e")));
+      }
     }
   }
 
   void _startGame() {
     Navigator.push(context, MaterialPageRoute(builder: (c) => TournamentScreen(
-      title: widget.match['title'], 
-      matchId: widget.match['id'], 
+      title: widget.match['title'],
+      matchId: widget.match['id'],
       courts: widget.match['courts_count'] ?? 1,
-      gameType: widget.match['type'] ?? 'Americano',
+      gameType: widget.match['type'] ?? 'Classic',
     )));
   }
 
   @override
   Widget build(BuildContext context) {
-    // 🔥 РАСЧЕТ ИГРОКОВ ПРЯМО ТУТ
+    bool isCompetitive = widget.match['is_competitive'] ?? true;
     int courts = widget.match['courts_count'] ?? 1;
-    int maxPlayers = courts * 4;
-    bool isFull = participantsCount >= maxPlayers;
+    int maxPlayers = widget.match['max_players'] ?? (courts * 4);
+    bool isFull = confirmedPlayers.length >= maxPlayers;
 
+    final uid = supabase.auth.currentUser?.id;
+    bool inConfirmed = confirmedPlayers.any((p) => p['user_id'] == uid);
+    bool inWaiting = waitingList.any((p) => p['user_id'] == uid);
+
+    // Логика кнопки и цвета
     String btnText = "Записаться";
-    Color btnColor = const Color(0xFF2F80ED); // Синий
+    Color btnColor = _primaryBlue;
 
-    if (myStatus == 'CONFIRMED') {
-      btnText = "Отменить запись";
+    if (inConfirmed) {
+      btnText = "Выйти из игры";
       btnColor = Colors.redAccent;
-    } else if (myStatus == 'WAITING') {
+    } else if (inWaiting) {
       btnText = "Покинуть очередь";
       btnColor = Colors.orange;
     } else if (isFull) {
-      btnText = "В лист ожидания";
-      btnColor = Colors.orangeAccent;
+      btnText = "Встать в очередь"; // Waitlist
+      btnColor = const Color(0xFFF2C94C); // Золотой/Оранжевый
     }
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: const Color(0xFF161B22), borderRadius: BorderRadius.circular(16)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(widget.match['title'] ?? 'Игра', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-                    const SizedBox(height: 4),
-                    Text("${widget.match['type']} • Корт: $courts", style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                    const SizedBox(height: 4),
-                    Text(
-                      "Игроков: $participantsCount / $maxPlayers ${isFull ? '(FULL)' : ''}", 
-                      style: TextStyle(color: isFull ? Colors.orange : Colors.green, fontSize: 12, fontWeight: FontWeight.bold)
-                    ),
-                  ],
+    return Scaffold(
+      backgroundColor: _bgDark,
+      appBar: AppBar(
+        backgroundColor: _bgDark, elevation: 0, leading: const BackButton(color: Colors.white), 
+        title: Text(widget.match['title'] ?? "Матч", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        actions: [if (isCreator) IconButton(icon: const Icon(Icons.delete_forever, color: Colors.redAccent), onPressed: _deleteMatch)]
+      ),
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: Row(children: [_tabBtn("Info", false), const SizedBox(width: 10), _tabBtn("Schedule", true), const SizedBox(width: 10), _tabBtn("Statistics", false)])),
+            const SizedBox(height: 20),
+            Container(padding: const EdgeInsets.all(15), margin: const EdgeInsets.symmetric(horizontal: 20), decoration: BoxDecoration(color: _cardColor, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white10)), child: Row(children: [Icon(isCompetitive ? Icons.emoji_events : Icons.tag_faces, color: isCompetitive ? const Color(0xFFF2C94C) : Colors.blue), const SizedBox(width: 10), Expanded(child: Text(isCompetitive ? "Рейтинговый матч" : "Дружеский матч", style: const TextStyle(color: Colors.white70)))])),
+            const SizedBox(height: 30),
+
+            // 🔥 КОРТЫ 🔥
+            Column(
+              children: List.generate(courts, (courtIndex) {
+                int baseIndex = courtIndex * 4;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 30, left: 20, right: 20),
+                  child: Column(
+                    children: [
+                      Text("КОРТ ${courtIndex + 1}", style: TextStyle(color: _primaryBlue, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 10),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(children: [_playerSlot(baseIndex), const SizedBox(height: 20), _playerSlot(baseIndex + 1)]),
+                          SizedBox(height: 150, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 2, height: 40, color: Colors.white10), Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: _cardColor, border: Border.all(color: Colors.white24), borderRadius: BorderRadius.circular(10)), child: const Text("VS", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white54))), Container(width: 2, height: 40, color: Colors.white10)])),
+                          Column(children: [_playerSlot(baseIndex + 2), const SizedBox(height: 20), _playerSlot(baseIndex + 3)]),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ),
+
+            // 🔥 ЛИСТ ОЖИДАНИЯ (ПОЯВЛЯЕТСЯ ЕСЛИ КТО-ТО ЖДЕТ) 🔥
+            if (waitingList.isNotEmpty) ...[
+              const Padding(padding: EdgeInsets.symmetric(horizontal: 20), child: Align(alignment: Alignment.centerLeft, child: Text("Лист ожидания:", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)))),
+              const SizedBox(height: 10),
+              SizedBox(
+                height: 80,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  itemCount: waitingList.length,
+                  itemBuilder: (context, index) {
+                    final p = waitingList[index]['profiles'];
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 15),
+                      child: Column(
+                        children: [
+                          CircleAvatar(radius: 25, backgroundImage: NetworkImage(p['avatar_url'] ?? "https://i.pravatar.cc/150"), backgroundColor: Colors.orange.withOpacity(0.2)),
+                          const SizedBox(height: 5),
+                          Text(p['username'] ?? "Wait", style: const TextStyle(color: Colors.grey, fontSize: 10)),
+                        ],
+                      ),
+                    );
+                  },
                 ),
               ),
-              if (isCreator)
-                IconButton(icon: const Icon(Icons.delete_forever, color: Colors.red), onPressed: _deleteMatch)
-              else
-                IconButton(icon: const Icon(Icons.chat_bubble_outline, color: Colors.grey), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (c) => ChatScreen(chatTitle: widget.match['title']))))
+              const SizedBox(height: 20),
             ],
-          ),
-          const SizedBox(height: 12),
-          
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: isLoading ? null : () => _handleJoinOrLeave(),
-                  style: ElevatedButton.styleFrom(backgroundColor: btnColor, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                  child: Text(isLoading ? "..." : btnText, style: const TextStyle(color: Colors.white)),
-                ),
+            
+            // КНОПКИ
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                children: [
+                  Expanded(child: SizedBox(height: 55, child: ElevatedButton(onPressed: _joinSlot, style: ElevatedButton.styleFrom(backgroundColor: btnColor, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))), child: Text(btnText, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18))))),
+                  if (isCreator) ...[const SizedBox(width: 10), Expanded(child: SizedBox(height: 55, child: ElevatedButton(onPressed: _startGame, style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF238636), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))), child: const Text("СТАРТ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)))))]
+                ],
               ),
-              const SizedBox(width: 10),
-              if (isCreator)
-                 Expanded(
-                  child: ElevatedButton(
-                    onPressed: _startGame,
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF238636), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                    child: const Text("СТАРТ", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                  ),
-                )
-              else 
-                 Expanded(
-                  child: OutlinedButton(
-                    onPressed: _startGame, 
-                    style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.grey), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                    child: const Text("Сетка", style: TextStyle(color: Colors.grey)),
-                  ),
-                ),
-            ],
-          )
-        ],
+            ),
+            const SizedBox(height: 40),
+          ],
+        ),
       ),
     );
+  }
+
+  Widget _tabBtn(String text, bool isActive) {
+    return Expanded(child: Container(padding: const EdgeInsets.symmetric(vertical: 10), decoration: BoxDecoration(color: isActive ? _primaryBlue : Colors.transparent, borderRadius: BorderRadius.circular(8), border: isActive ? null : Border.all(color: Colors.white24)), child: Center(child: Text(text, style: TextStyle(color: isActive ? Colors.white : Colors.white60, fontWeight: FontWeight.bold)))));
+  }
+
+  Widget _playerSlot(int index) {
+    Map<String, dynamic>? player;
+    // Берем только из ПОДТВЕРЖДЕННЫХ
+    if (index < confirmedPlayers.length) player = confirmedPlayers[index];
+    
+    if (player != null) {
+      final profile = player['profiles'];
+      return Column(children: [CircleAvatar(radius: 35, backgroundColor: _cardColor, backgroundImage: profile['avatar_url'] != null ? NetworkImage(profile['avatar_url']) : null, child: profile['avatar_url'] == null ? const Icon(Icons.person, size: 40, color: Colors.white54) : null), const SizedBox(height: 5), Text(profile['username'] ?? "Игрок", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white))]);
+    } else {
+      return GestureDetector(onTap: _joinSlot, child: Column(children: [Container(width: 70, height: 70, decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), shape: BoxShape.circle, border: Border.all(color: Colors.white10, width: 2)), child: const Icon(Icons.add, color: Colors.white24, size: 30)), const SizedBox(height: 5), const Text("Добавить", style: TextStyle(color: Colors.white24))]));
+    }
   }
 }
