@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../main.dart'; // Доступ к supabase
-import 'tournament_screen.dart'; // Импорт экрана турнира
+import '../main.dart';
+import 'tournament_screen.dart';
 
 class MatchesScreen extends StatefulWidget {
   const MatchesScreen({super.key});
@@ -11,23 +11,61 @@ class MatchesScreen extends StatefulWidget {
 }
 
 class _MatchesScreenState extends State<MatchesScreen> {
-  // --- ЦВЕТА (iOS Dark Style) ---
+  // Цвета
   final Color _bgDark = const Color(0xFF0D1117);
-  final Color _primaryBlue = const Color(0xFF007AFF); // iOS Blue
+  final Color _primaryBlue = const Color(0xFF007AFF);
   final Color _textWhite = Colors.white;
   final Color _textGrey = const Color(0xFF8E8E93);
 
-  late final Stream<List<Map<String, dynamic>>> _matchesStream;
+  // 🔥 ИСПРАВЛЕНИЕ 1: Убрали late, добавили ?, чтобы не было ошибки при старте
+  Stream<List<Map<String, dynamic>>>? _matchesStream;
+  List<int> _myGroupIds = []; // ID групп, в которых я состою
 
   @override
   void initState() {
     super.initState();
-    // Загружаем матчи (активные)
-    _matchesStream = supabase
+    _initStream();
+  }
+
+  Future<void> _initStream() async {
+    final uid = supabase.auth.currentUser?.id;
+    if (uid != null) {
+      // 1. Узнаем, в каких группах состоит пользователь
+      final membersData = await supabase
+          .from('group_members')
+          .select('group_id')
+          .eq('user_id', uid);
+      if (mounted) {
+        setState(() {
+          _myGroupIds = List<int>.from(membersData.map((e) => e['group_id']));
+        });
+      }
+    }
+
+    // 2. Стрим матчей с фильтрацией на клиенте
+    final stream = supabase
         .from('matches')
         .stream(primaryKey: ['id'])
         .order('start_time', ascending: true)
-        .map((data) => data.where((m) => m['status'] != 'FINISHED').toList());
+        .map((data) {
+          return data.where((m) {
+            if (m['status'] == 'FINISHED') return false;
+
+            // Логика видимости:
+            final matchGroupId = m['group_id'];
+            // Если группы нет (null) -> Публичный матч
+            if (matchGroupId == null) return true;
+
+            // Если есть группа -> показываем, только если я в ней есть
+            return _myGroupIds.contains(matchGroupId);
+          }).toList();
+        });
+
+    if (mounted) {
+      setState(() {
+        _matchesStream = stream;
+      });
+    }
   }
 
   @override
@@ -46,7 +84,7 @@ class _MatchesScreenState extends State<MatchesScreen> {
         actions: [
           IconButton(
               icon: Icon(Icons.filter_list, color: _primaryBlue),
-              onPressed: () {}),
+              onPressed: () {})
         ],
       ),
       floatingActionButton: FloatingActionButton(
@@ -55,42 +93,41 @@ class _MatchesScreenState extends State<MatchesScreen> {
         child: const Icon(Icons.add, color: Colors.white, size: 30),
         onPressed: () => _showCreateMatchSheet(context),
       ),
-      body: StreamBuilder<List<Map<String, dynamic>>>(
-        stream: _matchesStream,
-        builder: (context, snapshot) {
-          if (!snapshot.hasData)
-            return const Center(child: CircularProgressIndicator());
-          final matches = snapshot.data!;
-
-          if (matches.isEmpty) {
-            return Center(
-                child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.sports_tennis,
-                    size: 60, color: _textGrey.withOpacity(0.5)),
-                const SizedBox(height: 10),
-                Text("Нет активных матчей",
-                    style: TextStyle(color: _textGrey, fontSize: 16)),
-              ],
-            ));
-          }
-
-          return ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: matches.length,
-            separatorBuilder: (c, i) => const SizedBox(height: 20),
-            itemBuilder: (context, index) {
-              // Используем новый виджет карточки с аватарками
-              return MatchCardItem(match: matches[index]);
-            },
-          );
-        },
-      ),
+      // 🔥 ИСПРАВЛЕНИЕ: Проверяем на null
+      body: _matchesStream == null
+          ? const Center(child: CircularProgressIndicator())
+          : StreamBuilder<List<Map<String, dynamic>>>(
+              stream: _matchesStream,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                  return Center(
+                      child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                        Icon(Icons.sports_tennis,
+                            size: 60, color: _textGrey.withOpacity(0.5)),
+                        const SizedBox(height: 10),
+                        Text("Нет активных матчей",
+                            style: TextStyle(color: _textGrey, fontSize: 16))
+                      ]));
+                }
+                final matches = snapshot.data!;
+                return ListView.separated(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: matches.length,
+                  separatorBuilder: (c, i) => const SizedBox(height: 20),
+                  itemBuilder: (context, index) =>
+                      MatchCardItem(match: matches[index]),
+                );
+              },
+            ),
     );
   }
 
-  // 🔥 МЕНЮ СОЗДАНИЯ (ПОЛНЫЙ ФУНКЦИОНАЛ) 🔥
+  // 🔥 МЕНЮ СОЗДАНИЯ С ВЫБОРОМ ГРУППЫ 🔥
   void _showCreateMatchSheet(BuildContext context) {
     bool isCompetitive = true;
     String title = "";
@@ -109,42 +146,49 @@ class _MatchesScreenState extends State<MatchesScreen> {
       'Tournament'
     ];
     String selectedFormat = 'Classic';
-
     int courts = 1;
     DateTime selectedDateTime = DateTime.now().add(const Duration(hours: 1));
 
-    // Клубы
+    // Данные для списков
     List<Map<String, dynamic>> clubsList = [];
     String? selectedClubId;
-    bool isLoadingClubs = true;
-    String clubsStatus = "Загрузка...";
+    List<Map<String, dynamic>> myGroupsList = [];
+    String? selectedGroupId; // null = Публичный
+
+    bool isLoadingData = true;
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF1C1C1E), // iOS Dark Modal BG
+      backgroundColor: const Color(0xFF1C1C1E),
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
-            // Загрузка клубов (один раз)
-            if (isLoadingClubs) {
-              supabase.from('clubs').select('id, name, city').then((data) {
+            // Грузим данные
+            if (isLoadingData) {
+              Future.wait([
+                supabase.from('clubs').select('id, name, city'),
+                // Используем .filter вместо .in_
+                supabase.from('groups').select('id, name').filter(
+                    'id', 'in', _myGroupIds.isEmpty ? [-1] : _myGroupIds)
+              ]).then((results) {
                 setSheetState(() {
-                  clubsList = List<Map<String, dynamic>>.from(data);
-                  isLoadingClubs = false;
+                  // Явное приведение типов
+                  clubsList =
+                      List<Map<String, dynamic>>.from(results[0] as List);
+                  myGroupsList =
+                      List<Map<String, dynamic>>.from(results[1] as List);
+
                   if (clubsList.isNotEmpty) {
                     selectedClubId = clubsList.first['id'].toString();
-                    clubsStatus = "";
-                  } else {
-                    clubsStatus = "Нет клубов в базе";
                   }
+                  isLoadingData = false;
                 });
               });
-              isLoadingClubs = false;
+              isLoadingData = false;
             }
-
             Future<void> pickDateTime() async {
               final date = await showDatePicker(
                   context: context,
@@ -164,240 +208,264 @@ class _MatchesScreenState extends State<MatchesScreen> {
                   date.year, date.month, date.day, time.hour, time.minute));
             }
 
+            // 🔥 ИСПРАВЛЕНИЕ 2: Добавили SingleChildScrollView
             return Padding(
               padding: EdgeInsets.fromLTRB(
                   20, 20, 20, MediaQuery.of(context).viewInsets.bottom + 20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                      child: Container(
-                          width: 40,
-                          height: 4,
-                          color: Colors.grey[600],
-                          margin: const EdgeInsets.only(bottom: 20))),
-                  const Center(
-                      child: Text("Новая игра",
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold))),
-                  const SizedBox(height: 25),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                        child: Container(
+                            width: 40,
+                            height: 4,
+                            color: Colors.grey[600],
+                            margin: const EdgeInsets.only(bottom: 20))),
+                    const Center(
+                        child: Text("Новая игра",
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold))),
+                    const SizedBox(height: 25),
 
-                  // 1. Выбор клуба
-                  _label("Клуб"),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    decoration: BoxDecoration(
-                        color: const Color(0xFF2C2C2E),
-                        borderRadius: BorderRadius.circular(12)),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: selectedClubId,
-                        hint: Text(clubsStatus,
-                            style: const TextStyle(color: Colors.grey)),
-                        dropdownColor: const Color(0xFF2C2C2E),
-                        style:
-                            const TextStyle(color: Colors.white, fontSize: 16),
-                        isExpanded: true,
-                        items: clubsList.map((club) {
-                          return DropdownMenuItem<String>(
-                            value: club['id'].toString(),
-                            child: Text("${club['name']} (${club['city']})",
-                                overflow: TextOverflow.ellipsis),
-                          );
-                        }).toList(),
-                        onChanged: (val) =>
-                            setSheetState(() => selectedClubId = val),
+                    // 1. ВЫБОР: ПУБЛИЧНЫЙ или ДЛЯ ГРУППЫ
+                    _label("Видимость"),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(
+                          color: const Color(0xFF2C2C2E),
+                          borderRadius: BorderRadius.circular(12)),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String?>(
+                          value: selectedGroupId,
+                          dropdownColor: const Color(0xFF2C2C2E),
+                          style:
+                              const TextStyle(color: Colors.white, fontSize: 16),
+                          isExpanded: true,
+                          items: [
+                            const DropdownMenuItem<String?>(
+                                value: null,
+                                child: Text("🌍 Для всех (Публичный)")),
+                            ...myGroupsList.map((g) => DropdownMenuItem<String?>(
+                                value: g['id'].toString(),
+                                child: Text("🔒 Группа: ${g['name']}")))
+                          ],
+                          onChanged: (val) =>
+                              setSheetState(() => selectedGroupId = val),
+                        ),
                       ),
                     ),
-                  ),
+                    const SizedBox(height: 15),
 
-                  const SizedBox(height: 15),
-
-                  // 2. Формат и Корты
-                  Row(children: [
-                    Expanded(
-                      flex: 2,
-                      child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _label("Формат"),
-                            Container(
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 12),
-                                decoration: BoxDecoration(
-                                    color: const Color(0xFF2C2C2E),
-                                    borderRadius: BorderRadius.circular(12)),
-                                child: DropdownButtonHideUnderline(
-                                    child: DropdownButton<String>(
-                                        value: selectedFormat,
-                                        dropdownColor: const Color(0xFF2C2C2E),
-                                        style: const TextStyle(
-                                            color: Colors.white, fontSize: 14),
-                                        isExpanded: true,
-                                        items: formats
-                                            .map((f) => DropdownMenuItem(
-                                                value: f,
-                                                child: Text(f,
-                                                    overflow:
-                                                        TextOverflow.ellipsis)))
-                                            .toList(),
-                                        onChanged: (val) => setSheetState(
-                                            () => selectedFormat = val!)))),
-                          ]),
+                    _label("Клуб"),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(
+                          color: const Color(0xFF2C2C2E),
+                          borderRadius: BorderRadius.circular(12)),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: selectedClubId,
+                          hint: const Text("Загрузка...",
+                              style: TextStyle(color: Colors.grey)),
+                          dropdownColor: const Color(0xFF2C2C2E),
+                          style:
+                              const TextStyle(color: Colors.white, fontSize: 16),
+                          isExpanded: true,
+                          items: clubsList
+                              .map((club) => DropdownMenuItem<String>(
+                                  value: club['id'].toString(),
+                                  child: Text("${club['name']}",
+                                      overflow: TextOverflow.ellipsis)))
+                              .toList(),
+                          onChanged: (val) =>
+                              setSheetState(() => selectedClubId = val),
+                        ),
+                      ),
                     ),
-                    const SizedBox(width: 15),
-                    Expanded(
-                      flex: 1,
-                      child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _label("Корты"),
-                            Container(
-                                height: 48,
-                                decoration: BoxDecoration(
-                                    color: const Color(0xFF2C2C2E),
-                                    borderRadius: BorderRadius.circular(12)),
-                                child: Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceEvenly,
-                                    children: [
-                                      InkWell(
-                                          onTap: () => setSheetState(() {
-                                                if (courts > 1) courts--;
-                                              }),
-                                          child: const Icon(Icons.remove,
-                                              color: Colors.grey, size: 20)),
-                                      Text("$courts",
-                                          style: const TextStyle(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 16)),
-                                      InkWell(
-                                          onTap: () =>
-                                              setSheetState(() => courts++),
-                                          child: const Icon(Icons.add,
-                                              color: Color(0xFF007AFF),
-                                              size: 20))
-                                    ])),
-                          ]),
-                    ),
-                  ]),
-                  // ✅ АВТО-РАСЧЕТ
-                  Padding(
-                    padding: const EdgeInsets.only(top: 5, right: 5),
-                    child: Align(
-                        alignment: Alignment.centerRight,
-                        child: Text("Макс. игроков: ${courts * 4}",
-                            style: const TextStyle(
-                                color: Color(0xFF007AFF),
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold))),
-                  ),
+                    const SizedBox(height: 15),
 
-                  const SizedBox(height: 10),
+                    Row(children: [
+                      Expanded(
+                          flex: 2,
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _label("Формат"),
+                                Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12),
+                                    decoration: BoxDecoration(
+                                        color: const Color(0xFF2C2C2E),
+                                        borderRadius: BorderRadius.circular(12)),
+                                    child: DropdownButtonHideUnderline(
+                                        child: DropdownButton<String>(
+                                            value: selectedFormat,
+                                            dropdownColor:
+                                                const Color(0xFF2C2C2E),
+                                            style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 14),
+                                            isExpanded: true,
+                                            items: formats
+                                                .map((f) => DropdownMenuItem(
+                                                    value: f,
+                                                    child: Text(f,
+                                                        overflow: TextOverflow
+                                                            .ellipsis)))
+                                                .toList(),
+                                            onChanged: (val) => setSheetState(
+                                                () => selectedFormat = val!))))
+                              ])),
+                      const SizedBox(width: 15),
+                      Expanded(
+                          flex: 1,
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _label("Корты"),
+                                Container(
+                                    height: 48,
+                                    decoration: BoxDecoration(
+                                        color: const Color(0xFF2C2C2E),
+                                        borderRadius: BorderRadius.circular(12)),
+                                    child: Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.spaceEvenly,
+                                        children: [
+                                          InkWell(
+                                              onTap: () => setSheetState(() {
+                                                    if (courts > 1) courts--;
+                                                  }),
+                                              child: const Icon(Icons.remove,
+                                                  color: Colors.grey, size: 20)),
+                                          Text("$courts",
+                                              style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 16)),
+                                          InkWell(
+                                              onTap: () =>
+                                                  setSheetState(() => courts++),
+                                              child: const Icon(Icons.add,
+                                                  color: Color(0xFF007AFF),
+                                                  size: 20))
+                                        ]))
+                              ])),
+                    ]),
+                    Padding(
+                        padding: const EdgeInsets.only(top: 5, right: 5),
+                        child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Text("Макс. игроков: ${courts * 4}",
+                                style: const TextStyle(
+                                    color: Color(0xFF007AFF),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold)))),
+                    const SizedBox(height: 10),
 
-                  // 3. Тип
-                  Row(children: [
-                    Expanded(
-                        child: GestureDetector(
-                            onTap: () =>
-                                setSheetState(() => isCompetitive = true),
-                            child: _typeBtn("Ranked", isCompetitive))),
-                    const SizedBox(width: 10),
-                    Expanded(
-                        child: GestureDetector(
-                            onTap: () =>
-                                setSheetState(() => isCompetitive = false),
-                            child: _typeBtn("Friendly", !isCompetitive))),
-                  ]),
+                    Row(children: [
+                      Expanded(
+                          child: GestureDetector(
+                              onTap: () =>
+                                  setSheetState(() => isCompetitive = true),
+                              child: _typeBtn("Ranked", isCompetitive))),
+                      const SizedBox(width: 10),
+                      Expanded(
+                          child: GestureDetector(
+                              onTap: () =>
+                                  setSheetState(() => isCompetitive = false),
+                              child: _typeBtn("Friendly", !isCompetitive)))
+                    ]),
+                    const SizedBox(height: 15),
 
-                  const SizedBox(height: 15),
+                    _label("Дата"),
+                    GestureDetector(
+                        onTap: pickDateTime,
+                        child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 15, vertical: 15),
+                            decoration: BoxDecoration(
+                                color: const Color(0xFF2C2C2E),
+                                borderRadius: BorderRadius.circular(12)),
+                            child: Row(children: [
+                              const Icon(Icons.calendar_month,
+                                  color: Color(0xFF007AFF)),
+                              const SizedBox(width: 10),
+                              Text(
+                                  "${selectedDateTime.day}.${selectedDateTime.month} | ${selectedDateTime.hour}:${selectedDateTime.minute.toString().padLeft(2, '0')}",
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold)),
+                              const Spacer(),
+                              const Icon(Icons.edit,
+                                  color: Colors.grey, size: 16)
+                            ]))),
+                    const SizedBox(height: 15),
 
-                  // 4. Дата
-                  _label("Дата и время"),
-                  GestureDetector(
-                    onTap: pickDateTime,
-                    child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 15, vertical: 15),
-                        decoration: BoxDecoration(
-                            color: const Color(0xFF2C2C2E),
-                            borderRadius: BorderRadius.circular(12)),
-                        child: Row(children: [
-                          const Icon(Icons.calendar_month,
-                              color: Color(0xFF007AFF)),
-                          const SizedBox(width: 10),
-                          Text(
-                              "${selectedDateTime.day}.${selectedDateTime.month} | ${selectedDateTime.hour}:${selectedDateTime.minute.toString().padLeft(2, '0')}",
-                              style: const TextStyle(
+                    Row(children: [
+                      Expanded(
+                          flex: 2,
+                          child: _input("Название (опц.)", (v) => title = v)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                          flex: 1,
+                          child: _input(
+                              "Цена €", (v) => price = double.tryParse(v) ?? 0,
+                              isNum: true))
+                    ]),
+                    const SizedBox(height: 30),
+
+                    SizedBox(
+                        width: double.infinity,
+                        height: 55,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF007AFF),
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(30))),
+                          onPressed: () async {
+                            try {
+                              final uid = supabase.auth.currentUser?.id;
+                              if (uid == null) throw "Войдите в профиль";
+                              if (selectedClubId == null) throw "Выберите клуб!";
+
+                              await supabase.from('matches').insert({
+                                'creator_id': uid,
+                                'title': title.isEmpty ? "Match" : title,
+                                'club_id': int.parse(selectedClubId!),
+                                'group_id': selectedGroupId != null
+                                    ? int.parse(selectedGroupId!)
+                                    : null, // ГРУППА
+                                'is_competitive': isCompetitive,
+                                'price': price,
+                                'type': selectedFormat,
+                                'courts_count': courts,
+                                'max_players': courts * 4,
+                                'status': 'OPEN',
+                                'players_count': 0,
+                                'start_time': selectedDateTime.toIso8601String(),
+                              });
+                              if (context.mounted) Navigator.pop(context);
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                  content: Text("Ошибка: $e"),
+                                  backgroundColor: Colors.red));
+                            }
+                          },
+                          child: const Text("Создать матч",
+                              style: TextStyle(
                                   color: Colors.white,
-                                  fontWeight: FontWeight.bold)),
-                          const Spacer(),
-                          const Icon(Icons.edit, color: Colors.grey, size: 16)
-                        ])),
-                  ),
-
-                  const SizedBox(height: 15),
-                  Row(children: [
-                    Expanded(
-                        flex: 2,
-                        child: _input("Название (опц.)", (v) => title = v)),
-                    const SizedBox(width: 10),
-                    Expanded(
-                        flex: 1,
-                        child: _input(
-                            "Цена €", (v) => price = double.tryParse(v) ?? 0,
-                            isNum: true)),
-                  ]),
-
-                  const SizedBox(height: 30),
-
-                  // IOS BUTTON STYLE
-                  SizedBox(
-                    width: double.infinity,
-                    height: 55,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF007AFF),
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(30))),
-                      onPressed: () async {
-                        try {
-                          final uid = supabase.auth.currentUser?.id;
-                          if (uid == null) throw "Войдите в профиль";
-                          if (selectedClubId == null) throw "Выберите клуб!";
-
-                          await supabase.from('matches').insert({
-                            'creator_id': uid,
-                            'title': title.isEmpty ? "Match" : title,
-                            'club_id': int.parse(selectedClubId!),
-                            'is_competitive': isCompetitive, 'price': price,
-                            'type': selectedFormat,
-                            'courts_count': courts,
-                            'max_players': courts * 4, // ✅ Пишем в базу
-                            'status': 'OPEN', 'players_count': 0,
-                            'start_time': selectedDateTime.toIso8601String(),
-                          });
-                          if (context.mounted) Navigator.pop(context);
-                        } catch (e) {
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                              content: Text("Ошибка: $e"),
-                              backgroundColor: Colors.red));
-                        }
-                      },
-                      child: const Text("Создать матч",
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 17)),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                ],
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 17)),
+                        )),
+                    const SizedBox(height: 10),
+                  ],
+                ),
               ),
             );
           },
@@ -413,19 +481,18 @@ class _MatchesScreenState extends State<MatchesScreen> {
 
   Widget _typeBtn(String text, bool active) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      decoration: BoxDecoration(
-          color: active
-              ? const Color(0xFF007AFF).withOpacity(0.2)
-              : const Color(0xFF2C2C2E),
-          borderRadius: BorderRadius.circular(12),
-          border: active ? Border.all(color: const Color(0xFF007AFF)) : null),
-      child: Center(
-          child: Text(text,
-              style: TextStyle(
-                  color: active ? const Color(0xFF007AFF) : Colors.white,
-                  fontWeight: FontWeight.bold))),
-    );
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+            color: active
+                ? const Color(0xFF007AFF).withOpacity(0.2)
+                : const Color(0xFF2C2C2E),
+            borderRadius: BorderRadius.circular(12),
+            border: active ? Border.all(color: const Color(0xFF007AFF)) : null),
+        child: Center(
+            child: Text(text,
+                style: TextStyle(
+                    color: active ? const Color(0xFF007AFF) : Colors.white,
+                    fontWeight: FontWeight.bold))));
   }
 
   Widget _input(String label, Function(String) onChange, {bool isNum = false}) {
@@ -445,10 +512,7 @@ class _MatchesScreenState extends State<MatchesScreen> {
 }
 
 // -------------------------------------------------------------
-// 🔥 КАРТОЧКА С АВАТАРКАМИ И ЛОКАЦИЕЙ
-// -------------------------------------------------------------
-// -------------------------------------------------------------
-// 🔥 КАРТОЧКА С АВАТАРКАМИ, ЛОКАЦИЕЙ И ПОДСВЕТКОЙ (GLOW)
+// 🔥 КАРТОЧКА С ПОДСВЕТКОЙ (GLOW) И АВАТАРКАМИ
 // -------------------------------------------------------------
 class MatchCardItem extends StatefulWidget {
   final Map<String, dynamic> match;
@@ -470,7 +534,6 @@ class _MatchCardItemState extends State<MatchCardItem> {
   }
 
   Future<void> _loadDetails() async {
-    // 1. Грузим Клуб
     if (widget.match['club_id'] != null) {
       final c = await supabase
           .from('clubs')
@@ -480,7 +543,6 @@ class _MatchCardItemState extends State<MatchCardItem> {
       if (mounted) setState(() => clubData = c);
     }
 
-    // 2. Грузим Аватарки
     final p = await supabase
         .from('participants')
         .select('profiles(avatar_url)')
@@ -498,7 +560,6 @@ class _MatchCardItemState extends State<MatchCardItem> {
   @override
   Widget build(BuildContext context) {
     final m = widget.match;
-    // Данные для отображения
     final String title =
         clubData != null ? clubData!['name'] : (m['title'] ?? "Match");
     final String city = clubData != null
@@ -514,25 +575,24 @@ class _MatchCardItemState extends State<MatchCardItem> {
     int maxP = m['max_players'] ?? 4;
     int currentP = m['players_count'] ?? 0;
 
+    // Метка группы
+    final bool isPrivate = m['group_id'] != null;
+
     return GestureDetector(
       onTap: () => Navigator.push(context,
           MaterialPageRoute(builder: (c) => MatchLobbyScreen(match: m))),
       child: Container(
-        padding: const EdgeInsets.all(20), // Больше воздуха внутри
+        padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-            color: const Color(0xFF1C1C1E), // Фон карточки (iOS Dark)
-            borderRadius: BorderRadius.circular(24), // Еще более круглые углы
-            border: Border.all(
-                color: Colors.white.withOpacity(0.08)), // Тонкая рамка
+            color: const Color(0xFF1C1C1E),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.white.withOpacity(0.08)),
             boxShadow: [
-              // 💡 ГЛАВНАЯ ФИШКА: Синяя подсветка
               BoxShadow(
-                color: const Color(0xFF007AFF)
-                    .withOpacity(0.15), // Цвет бренда, прозрачный
-                blurRadius: 25, // Сильное размытие
-                offset: const Offset(0, 8), // Смещение вниз
+                color: const Color(0xFF007AFF).withOpacity(0.15),
+                blurRadius: 25,
+                offset: const Offset(0, 8),
               ),
-              // Обычная тень для глубины
               BoxShadow(
                   color: Colors.black.withOpacity(0.4),
                   blurRadius: 10,
@@ -541,22 +601,31 @@ class _MatchCardItemState extends State<MatchCardItem> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Хедер: Формат и Цена
+            // Хедер
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                      color: const Color(0xFF007AFF).withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(12)),
-                  child: Text(type.toUpperCase(),
-                      style: const TextStyle(
-                          color: Color(0xFF007AFF),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.5)),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                          color: const Color(0xFF007AFF).withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(12)),
+                      child: Text(type.toUpperCase(),
+                          style: const TextStyle(
+                              color: Color(0xFF007AFF),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5)),
+                    ),
+                    if (isPrivate) ...[
+                      const SizedBox(width: 8),
+                      const Icon(Icons.lock,
+                          size: 14, color: Colors.orangeAccent)
+                    ]
+                  ],
                 ),
                 Text("${m['price']}€",
                     style: const TextStyle(
@@ -567,7 +636,6 @@ class _MatchCardItemState extends State<MatchCardItem> {
             ),
             const SizedBox(height: 12),
 
-            // Название Клуба
             Text(title,
                 style: const TextStyle(
                     color: Colors.white,
@@ -575,8 +643,6 @@ class _MatchCardItemState extends State<MatchCardItem> {
                     fontWeight: FontWeight.bold,
                     letterSpacing: -0.5)),
             const SizedBox(height: 6),
-
-            // Локация с иконкой
             Row(children: [
               const Icon(Icons.location_on, size: 14, color: Colors.grey),
               const SizedBox(width: 4),
@@ -590,10 +656,9 @@ class _MatchCardItemState extends State<MatchCardItem> {
             const Divider(color: Colors.white10, height: 1),
             const SizedBox(height: 12),
 
-            // Футер: Время и Аватарки
+            // Футер
             Row(
               children: [
-                // Время в отдельном блоке
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -610,8 +675,6 @@ class _MatchCardItemState extends State<MatchCardItem> {
                   ]),
                 ),
                 const Spacer(),
-
-                // Аватарки (с наложением)
                 SizedBox(
                   height: 32,
                   width: 85,
@@ -630,8 +693,7 @@ class _MatchCardItemState extends State<MatchCardItem> {
                           child: Container(
                             decoration: BoxDecoration(
                                 border: Border.all(
-                                    color: const Color(0xFF1C1C1E),
-                                    width: 2), // Обводка в цвет карточки
+                                    color: const Color(0xFF1C1C1E), width: 2),
                                 shape: BoxShape.circle),
                             child: CircleAvatar(
                               radius: 14,
@@ -666,7 +728,7 @@ class _MatchCardItemState extends State<MatchCardItem> {
 }
 
 // ----------------------------------------------------------------------
-// 🔥 ПОЛНОЦЕННОЕ ЛОББИ (Waitlist, Delete, Courts)
+// 🔥 ПОЛНОЦЕННОЕ ЛОББИ (Кнопки Старт, Удалить, Waitlist)
 // ----------------------------------------------------------------------
 class MatchLobbyScreen extends StatefulWidget {
   final Map<String, dynamic> match;
@@ -677,8 +739,10 @@ class MatchLobbyScreen extends StatefulWidget {
 
 class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
   final Color _bgDark = const Color(0xFF0D1117);
-  final Color _cardColor = const Color(0xFF1C1C1E); // iOS
-  final Color _primaryBlue = const Color(0xFF007AFF); // iOS
+  final Color _cardColor = const Color(0xFF1C1C1E);
+  final Color _primaryBlue = const Color(0xFF007AFF);
+  final Color _dangerRed = const Color(0xFFFF3B30);
+  final Color _warningOrange = const Color(0xFFFF9500);
 
   List<Map<String, dynamic>> confirmedPlayers = [];
   List<Map<String, dynamic>> waitingList = [];
@@ -693,7 +757,9 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
 
   void _checkCreator() {
     final uid = supabase.auth.currentUser?.id;
-    if (uid == widget.match['creator_id']) setState(() => isCreator = true);
+    if (uid != null && uid == widget.match['creator_id']) {
+      setState(() => isCreator = true);
+    }
   }
 
   Future<void> _loadParticipants() async {
@@ -701,6 +767,7 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
         .from('participants')
         .select('user_id, status, profiles(username, level, avatar_url)')
         .eq('match_id', widget.match['id']);
+
     if (mounted) {
       setState(() {
         var all = List<Map<String, dynamic>>.from(res);
@@ -708,7 +775,6 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
             all.where((p) => p['status'] == 'CONFIRMED').toList();
         waitingList = all.where((p) => p['status'] == 'WAITING').toList();
       });
-      // Обновляем счетчик
       await supabase
           .from('matches')
           .update({'players_count': confirmedPlayers.length}).eq(
@@ -718,7 +784,9 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
 
   Future<void> _joinSlot() async {
     try {
-      final uid = supabase.auth.currentUser!.id;
+      final uid = supabase.auth.currentUser?.id;
+      if (uid == null) return;
+
       final inConfirmed = confirmedPlayers.any((p) => p['user_id'] == uid);
       final inWaiting = waitingList.any((p) => p['user_id'] == uid);
 
@@ -728,24 +796,27 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
             .delete()
             .eq('match_id', widget.match['id'])
             .eq('user_id', uid);
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text("Вы покинули игру")));
+        if (mounted)
+          ScaffoldMessenger.of(context)
+              .showSnackBar(const SnackBar(content: Text("Вы покинули игру")));
       } else {
         int maxP = widget.match['max_players'] ?? 4;
         String status = 'CONFIRMED';
         if (confirmedPlayers.length >= maxP) {
           status = 'WAITING';
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text("Мест нет. Вы добавлены в Очередь."),
-              backgroundColor: Colors.orange));
+          if (mounted)
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text("Мест нет. Вы в очереди."),
+                backgroundColor: _warningOrange));
         }
         await supabase.from('participants').insert(
             {'match_id': widget.match['id'], 'user_id': uid, 'status': status});
       }
       _loadParticipants();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Ошибка: $e"), backgroundColor: Colors.red));
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Ошибка: $e"), backgroundColor: _dangerRed));
     }
   }
 
@@ -765,8 +836,8 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
                         style: TextStyle(color: Colors.grey))),
                 TextButton(
                     onPressed: () => Navigator.pop(c, true),
-                    child: const Text("Удалить",
-                        style: TextStyle(color: Colors.redAccent))),
+                    child:
+                        Text("Удалить", style: TextStyle(color: _dangerRed))),
               ],
             ));
 
@@ -791,7 +862,7 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
         context,
         MaterialPageRoute(
             builder: (c) => TournamentScreen(
-                  title: widget.match['title'],
+                  title: widget.match['title'] ?? "Match",
                   matchId: widget.match['id'],
                   courts: widget.match['courts_count'] ?? 1,
                   gameType: widget.match['type'] ?? 'Classic',
@@ -802,10 +873,8 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
   Widget build(BuildContext context) {
     bool isCompetitive = widget.match['is_competitive'] ?? true;
     int courts = widget.match['courts_count'] ?? 1;
-    int maxPlayers = widget.match['max_players'] ?? (courts * 4);
 
-    // Данные Клуба в лобби (если переданы)
-    final club = widget.match['clubs']; // Если пришло из списка
+    final club = widget.match['clubs'];
     String address = club != null
         ? "${club['name']}, ${club['address']}"
         : (widget.match['club_name'] ?? "");
@@ -813,6 +882,7 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
     final uid = supabase.auth.currentUser?.id;
     bool inConfirmed = confirmedPlayers.any((p) => p['user_id'] == uid);
     bool inWaiting = waitingList.any((p) => p['user_id'] == uid);
+    int maxPlayers = widget.match['max_players'] ?? (courts * 4);
     bool isFull = confirmedPlayers.length >= maxPlayers;
 
     String btnText = inConfirmed
@@ -821,10 +891,10 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
             ? "Покинуть очередь"
             : (isFull ? "Встать в очередь" : "Записаться"));
     Color btnColor = inConfirmed
-        ? Colors.redAccent
+        ? _dangerRed
         : (inWaiting
-            ? Colors.orange
-            : (isFull ? const Color(0xFFF2C94C) : _primaryBlue));
+            ? _warningOrange
+            : (isFull ? _warningOrange : _primaryBlue));
 
     return Scaffold(
       backgroundColor: _bgDark,
@@ -846,8 +916,7 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
           actions: [
             if (isCreator)
               IconButton(
-                  icon:
-                      const Icon(Icons.delete_forever, color: Colors.redAccent),
+                  icon: Icon(Icons.delete_forever, color: _dangerRed),
                   onPressed: _deleteMatch)
           ]),
       body: SingleChildScrollView(
@@ -884,7 +953,7 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
                 ])),
             const SizedBox(height: 30),
 
-            // 🔥 КОРТЫ
+            // КОРТЫ
             Column(
               children: List.generate(courts, (courtIndex) {
                 int baseIndex = courtIndex * 4;
@@ -945,7 +1014,6 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
               }),
             ),
 
-            // 🔥 ЛИСТ ОЖИДАНИЯ
             if (waitingList.isNotEmpty) ...[
               const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 20),
@@ -973,7 +1041,7 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
                                       p['avatar_url'] ??
                                           "https://i.pravatar.cc/150"),
                                   backgroundColor:
-                                      Colors.orange.withOpacity(0.2)),
+                                      _warningOrange.withOpacity(0.2)),
                               const SizedBox(height: 5),
                               Text(p['username'] ?? "Wait",
                                   style: const TextStyle(
@@ -983,7 +1051,6 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
               const SizedBox(height: 20),
             ],
 
-            // КНОПКИ (iOS Style)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Row(
@@ -1010,7 +1077,7 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
                             child: ElevatedButton(
                                 onPressed: _startGame,
                                 style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF238636),
+                                    backgroundColor: const Color(0xFF34C759),
                                     shape: RoundedRectangleBorder(
                                         borderRadius:
                                             BorderRadius.circular(30))),
