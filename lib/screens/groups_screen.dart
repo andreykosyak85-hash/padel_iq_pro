@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../main.dart'; 
+import '../main.dart';
 import 'group_detail_screen.dart';
+import 'create_group_screen.dart';
 
 class GroupsScreen extends StatefulWidget {
   const GroupsScreen({super.key});
@@ -11,151 +12,140 @@ class GroupsScreen extends StatefulWidget {
 }
 
 class _GroupsScreenState extends State<GroupsScreen> {
-  // Стиль
   final Color _bgDark = const Color(0xFF0D1117);
   final Color _cardColor = const Color(0xFF1C1C1E);
-  final Color _primaryBlue = const Color(0xFF007AFF);
   final Color _textWhite = Colors.white;
   final Color _textGrey = const Color(0xFF8E8E93);
 
-  late final Stream<List<Map<String, dynamic>>> _groupsStream;
+  String _searchQuery = "";
+  List<int> _myGroupIds = [];
+  late Stream<List<Map<String, dynamic>>> _groupsStream;
 
   @override
   void initState() {
     super.initState();
-    // Грузим группы. 
-    // В идеале здесь нужен сложный SQL запрос "группы, где я участник".
-    // Пока оставляем как есть (все группы), чтобы ты мог видеть результат.
+    _loadMyGroupIds();
+    _initStream();
+  }
+
+  void _initStream() {
     _groupsStream = supabase
         .from('groups')
-        .stream(primaryKey: ['id'])
-        .order('created_at', ascending: false);
+        .stream(primaryKey: ['id']).order('created_at', ascending: false);
   }
 
-  // --- ЛОГИКА: СОЗДАНИЕ ГРУППЫ ---
-  void _showCreateGroupDialog() {
-    final nameController = TextEditingController();
-    final descController = TextEditingController();
+  // Обновляем список ID групп, где я состою
+  Future<void> _loadMyGroupIds() async {
+    final uid = supabase.auth.currentUser?.id;
+    if (uid == null) return;
     
-    showModalBottomSheet(
-      context: context, 
-      isScrollControlled: true,
-      backgroundColor: _cardColor,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (context) => Padding(
-        padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(context).viewInsets.bottom + 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-             Text("Новая группа", style: TextStyle(color: _textWhite, fontSize: 20, fontWeight: FontWeight.bold)),
-             const SizedBox(height: 20),
-             _input(nameController, "Название группы"),
-             const SizedBox(height: 15),
-             _input(descController, "Описание (опц.)"),
-             const SizedBox(height: 25),
-             SizedBox(
-               width: double.infinity, height: 50,
-               child: ElevatedButton(
-                 style: ElevatedButton.styleFrom(backgroundColor: _primaryBlue, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))),
-                 onPressed: () async {
-                   final name = nameController.text.trim();
-                   if (name.isEmpty) return;
-                   
-                   try {
-                     await supabase.from('groups').insert({
-                       'name': name,
-                       'description': descController.text.trim(),
-                       'creator_id': supabase.auth.currentUser!.id
-                     });
-                     if (mounted) Navigator.pop(context);
-                   } catch(e) {
-                     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Ошибка: $e")));
-                   }
-                 },
-                 child: const Text("Создать", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-               ),
-             )
-          ],
-        ),
-      )
-    );
+    // Делаем небольшую задержку, чтобы база успела обновиться после создания/удаления
+    await Future.delayed(const Duration(milliseconds: 300));
+
+    final res = await supabase
+        .from('group_members')
+        .select('group_id')
+        .eq('user_id', uid);
+    if (mounted) {
+      setState(() {
+        _myGroupIds = List<int>.from(res.map((e) => e['group_id']));
+      });
+    }
   }
 
-  // --- ЛОГИКА: ВСТУПИТЬ В ГРУППУ ПО ID ---
+  // Переход к созданию группы с ожиданием результата
+  // Переход к созданию группы с "умным" обновлением
+  void _goToCreateGroup() async {
+    final result = await Navigator.push(
+        context, MaterialPageRoute(builder: (c) => const CreateGroupScreen()));
+
+    // Если группа создана...
+    if (result == true) {
+      // ⏳ ШАГ 1: Даем базе полсекунды, чтобы точно успеть сохранить данные
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // ШАГ 2: Грузим обновленный список ID моих групп
+      await _loadMyGroupIds();
+
+      // ШАГ 3: Жестко перезапускаем поток данных, чтобы увидеть новую группу
+      setState(() {
+        _groupsStream = supabase
+            .from('groups')
+            .stream(primaryKey: ['id'])
+            .order('created_at', ascending: false);
+      });
+    }
+  }
+  // Переход в детали группы с ожиданием результата (удаления)
+  void _goToGroupDetail(Map<String, dynamic> group) async {
+    final result = await Navigator.push(
+        context, MaterialPageRoute(builder: (c) => GroupDetailScreen(group: group)));
+
+    // Если вернулось true (группа удалена), обновляем список
+    if (result == true) {
+      await _loadMyGroupIds();
+      setState(() {});
+    }
+  }
+
   void _showJoinGroupDialog() {
     final idController = TextEditingController();
-
     showDialog(
-      context: context, 
-      builder: (context) => AlertDialog(
-        backgroundColor: _cardColor,
-        title: const Text("Вступить в группу", style: TextStyle(color: Colors.white)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text("Введите ID группы, который вам дал друг:", style: TextStyle(color: Colors.grey, fontSize: 12)),
-            const SizedBox(height: 10),
-            TextField(
-              controller: idController,
-              keyboardType: TextInputType.number,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                filled: true, fillColor: Colors.black26,
-                hintText: "Например: 12",
-                hintStyle: const TextStyle(color: Colors.grey),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10))
+        context: context,
+        builder: (context) => AlertDialog(
+              backgroundColor: _cardColor,
+              title: const Text("Вступить в группу",
+                  style: TextStyle(color: Colors.white)),
+              content: TextField(
+                controller: idController,
+                keyboardType: TextInputType.number,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                    filled: true,
+                    fillColor: Colors.black26,
+                    hintText: "ID группы (например: 12)",
+                    hintStyle: const TextStyle(color: Colors.grey),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10))),
               ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Отмена")),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: _primaryBlue),
-            onPressed: () async {
-              final idStr = idController.text.trim();
-              if (idStr.isEmpty) return;
-              
-              try {
-                final int groupId = int.parse(idStr);
-                final uid = supabase.auth.currentUser!.id;
-
-                // Пробуем добавиться в таблицу участников
-                await supabase.from('group_members').insert({
-                  'group_id': groupId,
-                  'user_id': uid,
-                  'role': 'member'
-                });
-
-                if (mounted) {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Вы успешно вступили!"), backgroundColor: Colors.green));
-                }
-              } catch (e) {
-                // Скорее всего ошибка "duplicate key" (уже в группе) или "violation" (группы нет)
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Ошибка: Неверный ID или вы уже там."), backgroundColor: Colors.red));
-                }
-              }
-            }, 
-            child: const Text("Вступить", style: TextStyle(color: Colors.white))
-          )
-        ],
-      )
-    );
-  }
-
-  Widget _input(TextEditingController controller, String hint) {
-    return TextField(
-      controller: controller,
-      style: TextStyle(color: _textWhite),
-      decoration: InputDecoration(
-        labelText: hint, labelStyle: TextStyle(color: _textGrey),
-        filled: true, fillColor: const Color(0xFF2C2C2E),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none)
-      ),
-    );
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text("Отмена")),
+                ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF007AFF)),
+                    onPressed: () async {
+                      final idStr = idController.text.trim();
+                      if (idStr.isEmpty) return;
+                      try {
+                        final int groupId = int.parse(idStr);
+                        final uid = supabase.auth.currentUser!.id;
+                        await supabase.from('group_members').insert({
+                          'group_id': groupId,
+                          'user_id': uid,
+                          'role': 'member'
+                        });
+                        if (mounted) {
+                          Navigator.pop(context);
+                          _loadMyGroupIds(); // Обновляем список
+                          ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  content: Text("Вы успешно вступили!"),
+                                  backgroundColor: Colors.green));
+                        }
+                      } catch (e) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                              content: Text("Ошибка: Неверный ID или вы уже там."),
+                              backgroundColor: Colors.red));
+                        }
+                      }
+                    },
+                    child: const Text("Вступить",
+                        style: TextStyle(color: Colors.white)))
+              ],
+            ));
   }
 
   @override
@@ -163,73 +153,205 @@ class _GroupsScreenState extends State<GroupsScreen> {
     return Scaffold(
       backgroundColor: _bgDark,
       appBar: AppBar(
-        backgroundColor: _bgDark, elevation: 0,
-        title: Text("Сообщества", style: TextStyle(color: _textWhite, fontWeight: FontWeight.bold, fontSize: 24, fontFamily: '.SF Pro Display')),
+        backgroundColor: _bgDark,
+        elevation: 0,
+        title: const Text("Сообщества",
+            style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 28)),
         actions: [
-          // Кнопка ВСТУПИТЬ
           IconButton(
-            icon: const Icon(Icons.group_add, color: Colors.white), 
-            tooltip: "Вступить по ID",
-            onPressed: _showJoinGroupDialog
-          ),
-          // Кнопка СОЗДАТЬ
-          IconButton(
-            icon: Icon(Icons.add_circle, color: _primaryBlue), 
-            onPressed: _showCreateGroupDialog
-          ),
+              icon: const Icon(Icons.group_add, color: Colors.white),
+              onPressed: _showJoinGroupDialog),
+          Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: IconButton(
+              icon: const Icon(Icons.add_circle,
+                  color: Color(0xFF007AFF), size: 30),
+              onPressed: _goToCreateGroup,
+            ),
+          )
         ],
       ),
       body: StreamBuilder<List<Map<String, dynamic>>>(
         stream: _groupsStream,
         builder: (context, snapshot) {
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          final groups = snapshot.data!;
-          
-          if (groups.isEmpty) return Center(child: Text("Нет групп. Создайте или вступите!", style: TextStyle(color: _textGrey)));
+          if (!snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
 
-          return ListView.separated(
+          final allGroups = snapshot.data!;
+          final visibleGroups = _searchQuery.isEmpty
+              ? allGroups
+              : allGroups
+                  .where((g) => g['name']
+                      .toString()
+                      .toLowerCase()
+                      .contains(_searchQuery.toLowerCase()))
+                  .toList();
+
+          // Разделяем на Мои и Чужие
+          final myGroups = visibleGroups
+              .where((g) => _myGroupIds.contains(g['id']))
+              .toList();
+          final otherGroups = visibleGroups
+              .where((g) => !_myGroupIds.contains(g['id']))
+              .toList();
+
+          return SingleChildScrollView(
             padding: const EdgeInsets.all(16),
-            itemCount: groups.length,
-            separatorBuilder: (c, i) => const SizedBox(height: 12),
-            itemBuilder: (context, index) {
-              final group = groups[index];
-              
-              // 🔥 ДОБАВЛЕН ПЕРЕХОД (GestureDetector)
-              return GestureDetector(
-                onTap: () {
-                  Navigator.push(context, MaterialPageRoute(
-                    builder: (context) => GroupDetailScreen(group: group)
-                  ));
-                },
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(color: _cardColor, borderRadius: BorderRadius.circular(16)),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 50, height: 50,
-                        decoration: BoxDecoration(color: Colors.grey[800], borderRadius: BorderRadius.circular(12)),
-                        child: const Icon(Icons.groups, color: Colors.white),
-                      ),
-                      const SizedBox(width: 15),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(group['name'], style: TextStyle(color: _textWhite, fontWeight: FontWeight.bold, fontSize: 16)),
-                            if (group['description'] != null)
-                               Text(group['description'], style: TextStyle(color: _textGrey, fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis),
-                          ],
-                        ),
-                      ),
-                      Icon(Icons.chevron_right, color: _textGrey)
-                    ],
-                  ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ПОИСК
+                TextField(
+                  style: TextStyle(color: _textWhite),
+                  onChanged: (val) => setState(() => _searchQuery = val),
+                  decoration: InputDecoration(
+                      hintText: "Поиск...",
+                      hintStyle: TextStyle(color: _textGrey),
+                      prefixIcon: Icon(Icons.search, color: _textGrey),
+                      filled: true,
+                      fillColor: _cardColor,
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 0)),
                 ),
-              );
-            },
+                const SizedBox(height: 25),
+
+                // FAVORITES (Мои группы)
+                if (myGroups.isNotEmpty) ...[
+                  Text("Мои группы",
+                      style: TextStyle(
+                          color: _textWhite,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 160,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: myGroups.length,
+                      separatorBuilder: (c, i) => const SizedBox(width: 12),
+                      itemBuilder: (context, index) => GestureDetector(
+                        onTap: () => _goToGroupDetail(myGroups[index]), // 🔥 Навигация здесь
+                        child: _GroupCard(group: myGroups[index], isMember: true),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 30),
+                ],
+
+                // EXPLORE (Найти еще)
+                if (otherGroups.isNotEmpty) ...[
+                  Text("Найти еще",
+                      style: TextStyle(
+                          color: _textWhite,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 160,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: otherGroups.length,
+                      separatorBuilder: (c, i) => const SizedBox(width: 12),
+                      itemBuilder: (context, index) => GestureDetector(
+                        onTap: () => _goToGroupDetail(otherGroups[index]), // 🔥 Навигация здесь
+                        child: _GroupCard(group: otherGroups[index], isMember: false),
+                      ),
+                    ),
+                  ),
+                ],
+                
+                if(myGroups.isEmpty && otherGroups.isEmpty)
+                   Center(child: Padding(padding: const EdgeInsets.only(top: 50), child: Text("Групп пока нет", style: TextStyle(color: _textGrey)))),
+              ],
+            ),
           );
         },
+      ),
+    );
+  }
+}
+
+// КАРТОЧКА ГРУППЫ (Только дизайн, без логики клика)
+class _GroupCard extends StatelessWidget {
+  final Map<String, dynamic> group;
+  final bool isMember;
+
+  const _GroupCard({required this.group, required this.isMember});
+
+  @override
+  Widget build(BuildContext context) {
+    bool isPrivate = group['is_private'] ?? false;
+    String location = group['location'] ?? "Нет локации";
+
+    return Container(
+      width: 280, // Фиксированная ширина для горизонтального скролла
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C1E),
+        borderRadius: BorderRadius.circular(16),
+        image: DecorationImage(
+          image: group['image_url'] != null
+              ? NetworkImage(group['image_url'])
+              : const NetworkImage(
+                  "https://images.unsplash.com/photo-1554068865-24cecd4e34b8?q=80&w=2070"),
+          fit: BoxFit.cover,
+          colorFilter: ColorFilter.mode(Colors.black54, BlendMode.darken),
+        ),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          if (isPrivate)
+            const Row(
+              children: [
+                Icon(Icons.lock, color: Colors.amber, size: 14),
+                SizedBox(width: 4),
+                Text("Private",
+                    style: TextStyle(
+                        color: Colors.amber,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold))
+              ],
+            ),
+          Text(group['name'],
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold)),
+          Text(location,
+              style: const TextStyle(color: Colors.white70, fontSize: 12)),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                    color: isMember
+                        ? const Color(0xFF34C759)
+                        : Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(20)),
+                child: Text(
+                  isMember ? "Вы участник" : (isPrivate ? "Запрос" : "Войти"),
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 10),
+                ),
+              )
+            ],
+          )
+        ],
       ),
     );
   }

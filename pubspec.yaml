@@ -20,7 +20,7 @@ dependencies:
   # UI и графики
   cupertino_icons: ^1.0.8
   fl_chart: ^0.66.0
-  image_picker: ^1.0.7
+  image_picker: ^1.2.1
 
 dev_dependencies:
   flutter_test:
