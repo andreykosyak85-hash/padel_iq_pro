@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter/foundation.dart' show kIsWeb; 
+import 'dart:io' show Platform; 
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -19,7 +21,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
   // --- ЛОГИКА EMAIL/ПАРОЛЬ ---
   Future<void> _submit() async {
-    final email = _emailController.text.trim();
+    final email = _emailController.text.trim().toLowerCase();
     final password = _passwordController.text.trim();
 
     if (email.isEmpty) return _msg("Введите Email", true);
@@ -31,8 +33,9 @@ class _AuthScreenState extends State<AuthScreen> {
 
     try {
       if (_isReset) {
+        // Исправленный редирект для сброса пароля
         await _auth.resetPasswordForEmail(email,
-            redirectTo: 'io.supabase.flutter://reset-callback');
+            redirectTo: kIsWeb ? null : 'io.supabase.padeliq://login-callback');
         _msg("Ссылка сброса отправлена!", false);
         setState(() => _isReset = false);
       } else if (_isRegister) {
@@ -40,7 +43,8 @@ class _AuthScreenState extends State<AuthScreen> {
         if (mounted) _msg("Регистрация успешна!", false);
       } else {
         await _auth.signInWithPassword(email: email, password: password);
-        // Никаких Navigator.push! main.dart сам сработает.
+        // Задержка для Android
+        await Future.delayed(const Duration(milliseconds: 500));
       }
     } on AuthException catch (e) {
       _msg(e.message, true);
@@ -53,23 +57,33 @@ class _AuthScreenState extends State<AuthScreen> {
 
   // --- ЛОГИКА СОЦСЕТЕЙ (Google / Apple) ---
   Future<void> _socialAuth(OAuthProvider provider) async {
+    // 🛡 ЗАЩИТА: Если это Apple и мы на Android — показываем сообщение и выходим
+    if (provider == OAuthProvider.apple && !kIsWeb && Platform.isAndroid) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Вход через Apple доступен только на устройствах iOS"),
+          backgroundColor: Colors.grey,
+        ),
+      );
+      return; 
+    }
+
     setState(() => _isLoading = true);
     try {
-      // Это откроет браузер для входа
       await _auth.signInWithOAuth(
         provider,
-        redirectTo: 'io.supabase.flutter://callback', 
+        // Универсальный Deep Link для Android (Google)
+        redirectTo: kIsWeb ? null : 'io.supabase.padeliq://login-callback',
       );
-      // После возврата из браузера сессия обновится, и main.dart переключит экран
     } catch (e) {
       _msg("Ошибка входа: $e", true);
     } finally {
-      // Тут loader можно не выключать сразу, так как приложение может перезагрузиться
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
   void _msg(String txt, bool err) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(txt), backgroundColor: err ? Colors.red : Colors.green));
   }
@@ -83,6 +97,7 @@ class _AuthScreenState extends State<AuthScreen> {
       backgroundColor: const Color(0xFF0F172A),
       appBar: AppBar(
           backgroundColor: Colors.transparent,
+          elevation: 0,
           iconTheme: const IconThemeData(color: Colors.white)),
       body: Center(
         child: SingleChildScrollView(
@@ -92,10 +107,21 @@ class _AuthScreenState extends State<AuthScreen> {
             children: [
               // ЛОГОТИП
               Center(
-                child: Image.asset('assets/logo.png', height: 80),
+                child: Image.asset(
+                  'assets/logo.png',
+                  height: 150, // Вернул 150, как было в твоем коде
+                  frameBuilder:
+                      (context, child, frame, wasSynchronouslyLoaded) {
+                    if (wasSynchronouslyLoaded || frame != null) return child;
+                    return const SizedBox(height: 150);
+                  },
+                  errorBuilder: (context, error, stackTrace) {
+                    return const Icon(Icons.sports_tennis,
+                        size: 80, color: Color(0xFFccff00));
+                  },
+                ),
               ),
               const SizedBox(height: 20),
-              
               Text(title,
                   style: const TextStyle(
                       color: Colors.white,
@@ -139,8 +165,7 @@ class _AuthScreenState extends State<AuthScreen> {
                               fontWeight: FontWeight.bold)),
                 ),
               ),
-              
-              // --- БЛОК СОЦСЕТЕЙ ---
+
               if (!_isReset) ...[
                 const SizedBox(height: 30),
                 const Row(children: [
@@ -152,21 +177,18 @@ class _AuthScreenState extends State<AuthScreen> {
                   Expanded(child: Divider(color: Colors.white24)),
                 ]),
                 const SizedBox(height: 20),
-                
                 Row(
                   children: [
-                    // GOOGLE
                     Expanded(
                       child: _SocialBtn(
                         label: "Google",
                         color: Colors.white,
                         textColor: Colors.black,
-                        icon: Icons.g_mobiledata, // Или Icons.android если нет лого
+                        icon: Icons.g_mobiledata,
                         onTap: () => _socialAuth(OAuthProvider.google),
                       ),
                     ),
                     const SizedBox(width: 15),
-                    // APPLE
                     Expanded(
                       child: _SocialBtn(
                         label: "Apple",
@@ -179,7 +201,6 @@ class _AuthScreenState extends State<AuthScreen> {
                   ],
                 ),
               ],
-              // ---------------------
 
               const SizedBox(height: 30),
 
@@ -208,7 +229,7 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 }
 
-// Виджет поля ввода
+// Поле ввода
 class _Input extends StatelessWidget {
   final TextEditingController controller;
   final String label;
@@ -240,7 +261,7 @@ class _Input extends StatelessWidget {
   }
 }
 
-// Виджет кнопки соцсети
+// Кнопка соцсети
 class _SocialBtn extends StatelessWidget {
   final String label;
   final Color color;
@@ -263,11 +284,16 @@ class _SocialBtn extends StatelessWidget {
       child: ElevatedButton.icon(
         onPressed: onTap,
         icon: Icon(icon, color: textColor, size: 28),
-        label: Text(label, style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
+        label: Text(label,
+            style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
         style: ElevatedButton.styleFrom(
           backgroundColor: color,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          side: color == Colors.black ? const BorderSide(color: Colors.white24) : null,
+          elevation: 0,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          side: color == Colors.black
+              ? const BorderSide(color: Colors.white24)
+              : null,
         ),
       ),
     );
