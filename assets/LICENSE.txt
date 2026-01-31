@@ -1,0 +1,58 @@
+================================================================================
+PADEL IQ PRO - LICENSE & COPYRIGHT NOTICE
+================================================================================
+
+Copyright © 2026 Andrii Kosiak
+All rights reserved.
+
+================================================================================
+TERMS OF SERVICE
+================================================================================
+
+1. INTELLECTUAL PROPERTY
+   - All code, designs, and game analysis algorithms are proprietary
+   - Unauthorized copying or modification is strictly forbidden
+   - Reverse engineering is prohibited by law (DMCA compliant)
+
+2. USAGE RIGHTS
+   - You may only use this application for personal, non-commercial purposes
+   - You may not redistribute, sell, or lease this application
+   - You may not create derivative works based on this application
+
+3. RESTRICTIONS
+   - Do not attempt to decompile, disassemble, or reverse engineer
+   - Do not extract or reuse any components, graphics, or algorithms
+   - Do not use for commercial purposes without explicit written permission
+   - Do not remove or modify any copyright notices
+
+4. WARRANTY DISCLAIMER
+   This application is provided "as-is" without warranty of any kind.
+   The author is not responsible for any damages or losses incurred.
+
+5. LIMITATION OF LIABILITY
+   In no event shall the author be liable for any indirect, incidental,
+   special, consequential, or punitive damages.
+
+6. TERMINATION
+   These terms are effective until terminated. Your rights will be
+   immediately revoked if you violate any of these terms.
+
+7. GOVERNING LAW
+   These terms are governed by international copyright law.
+   Violations will be prosecuted to the fullest extent of the law.
+
+8. CONTACT
+   For licensing inquiries, please contact: Andrii Kosiak
+
+================================================================================
+DMCA NOTICE
+================================================================================
+
+This application contains proprietary code and technology protected under
+the Digital Millennium Copyright Act (DMCA). Unauthorized circumvention of
+security measures is prohibited by law. Any attempt to bypass, disable, or
+interfere with copy protection mechanisms will be met with legal action.
+
+================================================================================
+© 2026 Andrii Kosiak - All Rights Reserved
+================================================================================
