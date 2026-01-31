@@ -2,6 +2,11 @@ name: padel_app
 description: "Padel MVP application"
 publish_to: 'none'
 version: 1.0.0+1
+author: "Andrii Kosiak"
+
+# АВТОРСКОЕ ПРАВО
+# Copyright © 2026 Andrii Kosiak. All rights reserved.
+# Unauthorized copying, modification, or redistribution is strictly prohibited.
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -22,6 +27,7 @@ dependencies:
   fl_chart: ^0.66.0
   image_picker: ^1.2.1
   intl: ^0.20.2
+  table_calendar: ^3.1.0
 
 dev_dependencies:
   flutter_test:

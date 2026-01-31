@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
+import 'match_details_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -45,6 +47,11 @@ class _ProfileScreenState extends State<ProfileScreen>
   // ИСТОРИЯ (Реальная)
   List<Map<String, dynamic>> matchHistory = [];
 
+  // КАЛЕНДАРЬ
+  late DateTime _selectedDay;
+  late DateTime _focusedDay;
+  Map<DateTime, List<Map<String, dynamic>>> _events = {};
+
   int _selectedChartPeriod = 1;
   late AnimationController _animController;
   late Animation<double> _fadeAnim;
@@ -52,6 +59,11 @@ class _ProfileScreenState extends State<ProfileScreen>
   @override
   void initState() {
     super.initState();
+    
+    // Инициализация календаря
+    _selectedDay = DateTime.now();
+    _focusedDay = DateTime.now();
+    
     _animController = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 800));
     _fadeAnim = CurvedAnimation(parent: _animController, curve: Curves.easeOut);
@@ -115,36 +127,54 @@ class _ProfileScreenState extends State<ProfileScreen>
           .eq('creator_id', userId)
           .not('score', 'is', null)
           .order('date', ascending: false)
-          .limit(20);
+          .limit(100);
 
       final List<Map<String, dynamic>> loadedHistory = [];
+      final Map<DateTime, List<Map<String, dynamic>>> eventsMap = {};
       int w = 0;
       int l = 0;
 
       for (var match in response) {
         final score = match['score'] as String;
         final winnerId = match['winner_id'];
-        final date =
-            DateTime.tryParse(match['date'].toString()) ?? DateTime.now();
+        final startTime =
+            DateTime.tryParse(match['start_time'].toString()) ?? DateTime.now();
+        final date = DateTime(startTime.year, startTime.month, startTime.day);
         final location = match['location'] ?? "Unknown Club";
 
         bool isWin = winnerId == userId;
-        if (isWin)
-          w++;
-        else
-          l++;
+        if (isWin) w++;
+        else l++;
 
+        // Добавить в историю с форматированной датой
         loadedHistory.add({
-          "date": DateFormat('d MMM').format(date),
+          "date": DateFormat('d MMM').format(startTime),
           "result": isWin ? "WIN" : "LOSE",
           "score": score,
           "opponent": location,
+          "match_id": match['id'],
+          "start_time": startTime,
+          "status": match['status'],
+        });
+
+        // Добавить в календарь событий
+        if (!eventsMap.containsKey(date)) {
+          eventsMap[date] = [];
+        }
+        eventsMap[date]!.add({
+          "match_id": match['id'],
+          "start_time": startTime,
+          "location": location,
+          "score": score,
+          "result": isWin ? "WIN" : "LOSE",
+          "status": match['status'],
         });
       }
 
       if (mounted) {
         setState(() {
           matchHistory = loadedHistory;
+          _events = eventsMap;
           totalMatches = loadedHistory.length;
           wins = w;
           loses = l;
@@ -453,6 +483,104 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
+  // 📜 КОПИРАЙТ И ЛИЦЕНЗИЯ
+  void _showCopyright() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: const Text(
+          "© PADEL IQ PRO",
+          style: TextStyle(
+            color: Color(0xFFccff00),
+            fontWeight: FontWeight.bold,
+            fontSize: 18,
+          ),
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F172A),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey[700]!),
+                ),
+                child: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Copyright © 2026",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      "Andrii Kosiak",
+                      style: TextStyle(
+                        color: Color(0xFFccff00),
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                    SizedBox(height: 12),
+                    Text(
+                      "All rights reserved.",
+                      style: TextStyle(
+                        color: Colors.grey,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                "Unauthorized copying, modification, or redistribution of this software is strictly prohibited.",
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red.withOpacity(0.3)),
+                ),
+                child: const Text(
+                  "🔒 DMCA Protected: Reverse engineering prohibited by law",
+                  style: TextStyle(
+                    color: Colors.red,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              "ОК",
+              style: TextStyle(color: Color(0xFFccff00)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -467,6 +595,9 @@ class _ProfileScreenState extends State<ProfileScreen>
                 fontWeight: FontWeight.w900,
                 letterSpacing: 2)),
         actions: [
+          IconButton(
+              icon: const Icon(Icons.copyright, color: Colors.grey),
+              onPressed: _showCopyright),
           IconButton(
               icon: const Icon(Icons.tune, color: Colors.white),
               onPressed: _openSettings)
@@ -858,56 +989,203 @@ class _ProfileScreenState extends State<ProfileScreen>
       );
     }
 
+    // Получить события для выбранного дня
+    final selectedDate = DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day);
+    final selectedEvents = _events[selectedDate] ?? [];
+
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Text("ИСТОРИЯ ИГР",
+      const Text("МОЯ АКТИВНОСТЬ",
           style: TextStyle(
               color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
       const SizedBox(height: 15),
-      ListView.separated(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: matchHistory.length,
-          separatorBuilder: (c, i) => const SizedBox(height: 10),
-          itemBuilder: (context, index) {
-            final match = matchHistory[index];
-            bool isWin = match['result'] == "WIN";
-            return Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                    color: const Color(0xFF1E293B),
-                    borderRadius: BorderRadius.circular(16)),
-                child: Row(children: [
+      
+      // КАЛЕНДАРЬ
+      Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E293B),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: TableCalendar(
+          firstDay: DateTime.utc(2024, 1, 1),
+          lastDay: DateTime.utc(2026, 12, 31),
+          focusedDay: _focusedDay,
+          selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+          onDaySelected: (selectedDay, focusedDay) {
+            setState(() {
+              _selectedDay = selectedDay;
+              _focusedDay = focusedDay;
+            });
+          },
+          onPageChanged: (focusedDay) {
+            _focusedDay = focusedDay;
+          },
+          eventLoader: (day) {
+            final dayDate = DateTime(day.year, day.month, day.day);
+            return _events[dayDate] ?? [];
+          },
+          calendarStyle: CalendarStyle(
+            defaultTextStyle: const TextStyle(color: Colors.white70),
+            weekendTextStyle: const TextStyle(color: Colors.white70),
+            selectedTextStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            todayTextStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            outsideTextStyle: const TextStyle(color: Colors.grey),
+            selectedDecoration: BoxDecoration(
+              color: Colors.blue.withOpacity(0.6),
+              shape: BoxShape.circle,
+            ),
+            todayDecoration: BoxDecoration(
+              color: Colors.blue.withOpacity(0.3),
+              shape: BoxShape.circle,
+            ),
+            markerDecoration: BoxDecoration(
+              color: Colors.transparent,
+              shape: BoxShape.circle,
+            ),
+          ),
+          headerStyle: const HeaderStyle(
+            formatButtonVisible: false,
+            titleCentered: true,
+            titleTextStyle: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+            leftChevronIcon: Icon(Icons.chevron_left, color: Colors.white70),
+            rightChevronIcon: Icon(Icons.chevron_right, color: Colors.white70),
+          ),
+          daysOfWeekStyle: const DaysOfWeekStyle(
+            weekdayStyle: TextStyle(color: Colors.white70, fontSize: 12),
+            weekendStyle: TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+          calendarBuilders: CalendarBuilders(
+            markerBuilder: (context, day, events) {
+              if (events.isEmpty) return const SizedBox();
+              
+              // Определить цвет по статусу матча
+              try {
+                final event = events.first as Map<String, dynamic>;
+                final startTime = event['start_time'] as DateTime;
+                final isPast = startTime.isBefore(DateTime.now());
+                final color = isPast ? Colors.red : Colors.green;
+                
+                return Positioned(
+                  bottom: 1,
+                  child: Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                );
+              } catch (e) {
+                return const SizedBox();
+              }
+            },
+          ),
+        ),
+      ),
+      
+      const SizedBox(height: 20),
+      
+      // МАТЧИ НА ВЫБРАННЫЙ ДЕНЬ
+      if (selectedEvents.isNotEmpty) ...[
+        Text(
+          "Игры на ${DateFormat('d MMMM y').format(_selectedDay)}",
+          style: const TextStyle(color: Colors.white70, fontSize: 14),
+        ),
+        const SizedBox(height: 12),
+        ...selectedEvents.map((event) {
+          final startTime = event['start_time'] as DateTime;
+          final isPast = startTime.isBefore(DateTime.now());
+          final isWin = event['result'] == 'WIN';
+          
+          return GestureDetector(
+            onTap: () {
+              // Навигация на деталь матча
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => MatchDetailsScreen(
+                    matchId: event['match_id'],
+                  ),
+                ),
+              );
+            },
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F172A),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isPast ? Colors.red.withOpacity(0.5) : Colors.green.withOpacity(0.5),
+                  width: 1.5,
+                ),
+              ),
+              child: Row(
+                children: [
                   Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                          color: isWin
-                              ? Colors.green.withOpacity(0.2)
-                              : Colors.red.withOpacity(0.2),
-                          shape: BoxShape.circle),
-                      child: Center(
-                          child: Text(match['result'][0],
-                              style: TextStyle(
-                                  color: isWin ? Colors.green : Colors.red,
-                                  fontWeight: FontWeight.bold)))),
-                  const SizedBox(width: 15),
+                    width: 35,
+                    height: 35,
+                    decoration: BoxDecoration(
+                      color: isPast
+                          ? Colors.red.withOpacity(0.2)
+                          : Colors.green.withOpacity(0.2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Center(
+                      child: Text(
+                        event['result'][0],
+                        style: TextStyle(
+                          color: isPast ? Colors.red : Colors.green,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
                   Expanded(
-                      child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                        Text(match['opponent'],
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold)),
-                        Text(match['date'],
-                            style: TextStyle(
-                                color: Colors.grey[500], fontSize: 12))
-                      ])),
-                  Text(match['score'],
-                      style: const TextStyle(
-                          color: Colors.white, fontWeight: FontWeight.bold)),
-                ]));
-          }),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          event['location'],
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                        Text(
+                          DateFormat('HH:mm').format(startTime),
+                          style: const TextStyle(
+                            color: Colors.grey,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    event['score'],
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }).toList(),
+      ] else
+        Center(
+          child: Text(
+            "Нет игр на выбранную дату",
+            style: TextStyle(color: Colors.grey[500], fontSize: 14),
+          ),
+        ),
     ]);
   }
 }

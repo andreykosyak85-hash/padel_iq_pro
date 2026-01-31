@@ -1,0 +1,82 @@
+================================================================================
+PADEL IQ PRO - COPYRIGHT NOTICE
+================================================================================
+
+© 2026 Andrii Kosiak
+All Rights Reserved
+
+================================================================================
+INTELLECTUAL PROPERTY STATEMENT
+================================================================================
+
+This application and all of its components, including but not limited to:
+- Source code and compiled software
+- Game analysis algorithms
+- User interface design
+- Graphics and visual elements
+- Documentation and manuals
+- Database schemas and structures
+- API specifications
+
+...are the exclusive property of Andrii Kosiak and are protected by 
+international copyright law.
+
+================================================================================
+TERMS OF USE
+================================================================================
+
+This software is licensed, not sold. You are granted a limited, 
+non-exclusive, non-transferable license to:
+
+✓ Use this application for personal, non-commercial purposes
+✓ Access and view the features as designed
+
+You are PROHIBITED from:
+
+✗ Copying, cloning, or reproducing the code
+✗ Modifying, adapting, or creating derivative works
+✗ Reverse engineering, decompiling, or disassembling
+✗ Removing or altering copyright notices
+✗ Distributing, selling, or renting the application
+✗ Using for commercial purposes without written permission
+✗ Circumventing security or technological protection measures
+
+================================================================================
+DIGITAL MILLENNIUM COPYRIGHT ACT (DMCA) NOTICE
+================================================================================
+
+This application contains proprietary code protected under the Digital 
+Millennium Copyright Act (DMCA). Unauthorized access, circumvention of 
+technological protection measures, or attempted reverse engineering is 
+strictly prohibited by law.
+
+Violations will result in:
+- Civil penalties up to $150,000 per violation
+- Criminal prosecution
+- Immediate legal action
+- Damage recovery claims
+
+================================================================================
+ENFORCEMENT
+================================================================================
+
+Andrii Kosiak actively monitors for unauthorized use and copyright 
+infringement. All violations will be prosecuted to the fullest extent 
+of the law, including but not limited to:
+
+• Cease and desist orders
+• Civil litigation
+• Damages and restitution
+• Criminal prosecution where applicable
+
+================================================================================
+CONTACT
+================================================================================
+
+For licensing inquiries, permissions, or legal matters:
+Andrii Kosiak
+Copyright © 2026
+
+================================================================================
+Last Updated: January 31, 2026
+================================================================================

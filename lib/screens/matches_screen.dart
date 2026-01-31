@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../main.dart';
 import 'tournament_screen.dart';
+import 'match_control_screen.dart';
+import 'dart:async';
 
 class MatchesScreen extends StatefulWidget {
-  const MatchesScreen({super.key});
+  final int initialIndex;
+  const MatchesScreen({super.key, this.initialIndex = 0});
 
   @override
   State<MatchesScreen> createState() => _MatchesScreenState();
@@ -23,7 +26,7 @@ class _MatchesScreenState extends State<MatchesScreen> with SingleTickerProvider
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 3, vsync: this, initialIndex: widget.initialIndex);
     _initStream();
   }
 
@@ -43,6 +46,9 @@ class _MatchesScreenState extends State<MatchesScreen> with SingleTickerProvider
         });
       }
     }
+    // 🔥 Сортируем от СТАРЫХ к НОВЫМ (ascending: true)
+    // Это важно, чтобы в "Поиске" ближайшие игры были сверху.
+    // А в "Истории" мы этот список перевернем (reversed).
     final stream = supabase.from('matches').stream(primaryKey: ['id']).order('start_time', ascending: true);
     if (mounted) setState(() => _matchesStream = stream);
   }
@@ -70,7 +76,6 @@ class _MatchesScreenState extends State<MatchesScreen> with SingleTickerProvider
         backgroundColor: _primaryBlue,
         shape: const CircleBorder(),
         elevation: 10,
-        // 🔥 Убрал shadowColor, чтобы не было ошибки
         child: const Icon(Icons.add, color: Colors.white, size: 30),
         onPressed: () => _showCreateMatchSheet(context),
       ),
@@ -110,8 +115,13 @@ class _MatchesScreenState extends State<MatchesScreen> with SingleTickerProvider
                 return TabBarView(
                   controller: _tabController,
                   children: [
+                    // Поиск: Ближайшие сверху (стандартный порядок)
                     _buildList(activeList, "Нет активных игр"),
-                    _buildList(myList, "Вы не создали игр"),
+                    
+                    // Мои: Сначала новые (переворачиваем)
+                    _buildList(myList.reversed.toList(), "Вы не создали игр"),
+                    
+                    // 🔥 История: Сначала НЕДАВНИЕ (переворачиваем, чтобы старые ушли вниз)
                     _buildList(historyList.reversed.toList(), "История пуста", isHistory: true),
                   ],
                 );
@@ -311,7 +321,7 @@ class _MatchesScreenState extends State<MatchesScreen> with SingleTickerProvider
 }
 
 // -------------------------------------------------------------
-// 🔥 КАРТОЧКА МАТЧА (С УРОВНЕМ)
+// 🔥 КАРТОЧКА МАТЧА
 // -------------------------------------------------------------
 class MatchCardItem extends StatefulWidget {
   final Map<String, dynamic> match;
@@ -354,10 +364,11 @@ class _MatchCardItemState extends State<MatchCardItem> {
     int maxP = int.tryParse(m['max_players'].toString()) ?? 4;
     int currentP = int.tryParse(m['players_count'].toString()) ?? 0;
     
-    // 🔥 Показываем уровень
     final double minLevel = (m['level_min'] ?? 0).toDouble();
     final double maxLevel = (m['level_max'] ?? 7).toDouble();
     String levelStr = "${minLevel.toStringAsFixed(1)} - ${maxLevel.toStringAsFixed(1)}";
+    
+    final String score = m['score']?.toString() ?? "";
 
     return GestureDetector(
       onTap: () => Navigator.push(context, MaterialPageRoute(builder: (c) => MatchLobbyScreen(match: m))),
@@ -369,10 +380,12 @@ class _MatchCardItemState extends State<MatchCardItem> {
             Row(children: [
                Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: widget.isHistory ? Colors.grey.withOpacity(0.2) : const Color(0xFF007AFF).withOpacity(0.2), borderRadius: BorderRadius.circular(8)), child: Text(widget.isHistory ? "ЗАВЕРШЕН" : type, style: TextStyle(color: widget.isHistory ? Colors.grey : const Color(0xFF007AFF), fontWeight: FontWeight.bold, fontSize: 10))),
                const SizedBox(width: 8),
-               // 🔥 УРОВЕНЬ
                Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5), decoration: BoxDecoration(border: Border.all(color: Colors.white24), borderRadius: BorderRadius.circular(8)), child: Text("Lev: $levelStr", style: const TextStyle(color: Colors.white70, fontSize: 10))),
             ]),
-            Text("$price€", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+            
+            (widget.isHistory && score.isNotEmpty && score != "null")
+              ? Text(score, style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16, shadows: [Shadow(color: Colors.green, blurRadius: 10)]))
+              : Text("$price€", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
           ]),
           const SizedBox(height: 10),
           Text(title, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
@@ -412,15 +425,41 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
   List<Map<String, dynamic>> waitingList = [];
   bool isCreator = false;
   
-  // 🔥 МАССИВ КОНТРОЛЛЕРОВ ЧТОБЫ СЧЕТ НЕ ДУБЛИРОВАЛСЯ
   int _currentSet = 1; 
-  final List<TextEditingController> _scoreControllers = List.generate(200, (_) => TextEditingController()); 
+  final List<TextEditingController> _scoreControllers = List.generate(200, (_) => TextEditingController());
+  
+  // Таймер для отображения времени матча
+  Timer? _matchTimer;
+  Duration _matchDuration = Duration.zero;
+  late DateTime _matchStartTime;
 
   @override
   void initState() {
     super.initState();
     isCreator = supabase.auth.currentUser?.id == widget.match['creator_id'];
     _loadParticipants();
+    
+    // Если матч уже IN_PROGRESS, запускаем таймер
+    if (widget.match['status'] == 'IN_PROGRESS') {
+      _matchStartTime = DateTime.now();
+      _startMatchTimer();
+    }
+  }
+
+  void _startMatchTimer() {
+    _matchTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (mounted) {
+        setState(() {
+          _matchDuration = DateTime.now().difference(_matchStartTime);
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _matchTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadParticipants() async {
@@ -436,7 +475,6 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
     }
   }
 
-  // 🔥 ЗАПИСЬ НА КОНКРЕТНЫЙ СЛОТ + ПРОВЕРКА УРОВНЯ
   Future<void> _joinSpecificSlot(int slotIndex) async {
     final uid = supabase.auth.currentUser?.id;
     if (uid == null) return;
@@ -448,22 +486,18 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
        return;
     }
 
-    // 🔥 ПРОВЕРКА УРОВНЯ ИГРОКА
     try {
       final profileData = await supabase.from('profiles').select('level').eq('id', uid).single();
       final double userLevel = (profileData['level'] ?? 0).toDouble();
       final double minL = (widget.match['level_min'] ?? 0).toDouble();
       final double maxL = (widget.match['level_max'] ?? 7).toDouble();
 
-      // Если ты создатель - пускаем в любом случае, иначе проверяем
       if (!isCreator && (userLevel < minL || userLevel > maxL)) {
          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Ваш рейтинг ($userLevel) не подходит. Требуется: $minL - $maxL"), backgroundColor: Colors.red));
          return;
       }
 
-      // Пересадка: удаляем старую
       await supabase.from('participants').delete().eq('match_id', widget.match['id']).eq('user_id', uid);
-      // Садимся
       await supabase.from('participants').insert({
         'match_id': widget.match['id'], 'user_id': uid, 'status': 'CONFIRMED', 'slot_index': slotIndex
       });
@@ -482,8 +516,17 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
   }
 
   Future<void> _startMatch() async {
-    await supabase.from('matches').update({'status': 'IN_PROGRESS'}).eq('id', widget.match['id']);
-    setState(() => widget.match['status'] = 'IN_PROGRESS');
+    try {
+      // Обновляем статус матча в БД
+      await supabase.from('matches').update({'status': 'IN_PROGRESS'}).eq('id', widget.match['id']);
+      
+      if (mounted) {
+        // Переходим на экран управления матчем с таймером
+        Navigator.push(context, MaterialPageRoute(builder: (c) => MatchControlScreen(match: widget.match)));
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Ошибка: $e")));
+    }
   }
 
   Future<void> _deleteMatch() async {
@@ -500,10 +543,44 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
   }
 
   Future<void> _finishMatch() async {
-    final confirm = await showDialog<bool>(context: context, builder: (c) => AlertDialog(backgroundColor: _cardColor, title: const Text("Завершить матч?", style: TextStyle(color: Colors.white)), content: const Text("Матч будет перемещен в историю."), actions: [TextButton(onPressed: () => Navigator.pop(c, false), child: const Text("Отмена", style: TextStyle(color: Colors.grey))), TextButton(onPressed: () => Navigator.pop(c, true), child: const Text("Завершить", style: TextStyle(color: Colors.blue)))]));
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        backgroundColor: _cardColor,
+        title: const Text("Завершить матч?", style: TextStyle(color: Colors.white)),
+        content: const Text("Матч будет перемещен в историю.", style: TextStyle(color: Colors.grey)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text("Отмена", style: TextStyle(color: Colors.grey))),
+          TextButton(onPressed: () => Navigator.pop(c, true), child: Text("Завершить", style: TextStyle(color: _primaryBlue)))
+        ]
+      )
+    );
+
     if (confirm == true) {
-      await supabase.from('matches').update({'status': 'FINISHED'}).eq('id', widget.match['id']);
-      if (mounted) Navigator.pop(context);
+      String finalScore = "";
+      String type = (widget.match['type'] ?? 'Classic').toString(); 
+
+      if (type == 'Classic') {
+        List<String> sets = [];
+        for (int i = 0; i < 5; i++) {
+          int cIdx1 = i * 8 + 0; 
+          int cIdx2 = i * 8 + 1;
+          String left = _scoreControllers[cIdx1].text.trim();
+          String right = _scoreControllers[cIdx2].text.trim();
+          if (left.isNotEmpty && right.isNotEmpty) sets.add("$left-$right");
+        }
+        finalScore = sets.join(" "); 
+        if (finalScore.isEmpty) finalScore = "0-0"; 
+      } else {
+        finalScore = "Турнир"; 
+      }
+
+      try {
+        await supabase.from('matches').update({'status': 'FINISHED', 'score': finalScore}).eq('id', widget.match['id']);
+        if (mounted) Navigator.pop(context);
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Ошибка: $e")));
+      }
     }
   }
 
@@ -514,6 +591,10 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
     bool isClassic = type == 'Classic';
     bool isInProgress = widget.match['status'] == 'IN_PROGRESS';
     bool isFinished = widget.match['status'] == 'FINISHED';
+    
+    // 🔥 ОТОБРАЖЕНИЕ СЧЕТА В ЛОББИ ПОСЛЕ ЗАВЕРШЕНИЯ
+    String scoreDisplay = widget.match['score']?.toString() ?? "";
+
     final uid = supabase.auth.currentUser?.id;
     bool amIJoined = confirmedPlayers.any((p) => p['user_id'] == uid);
 
@@ -523,13 +604,38 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
       body: SingleChildScrollView(
         child: Column(children: [
           
+          // 🔥 ТАЙМЕР МАТЧА (если матч в процессе)
+          if (isInProgress)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(15),
+              color: Colors.red.withOpacity(0.1),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.timer, color: Colors.redAccent, size: 20),
+                  const SizedBox(width: 10),
+                  const Text("ВРЕМЯ МАТЧА: ", style: TextStyle(color: Colors.grey, fontSize: 12)),
+                  Text(
+                    _formatDuration(_matchDuration),
+                    style: const TextStyle(
+                      color: Colors.redAccent,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      fontFamily: 'Courier',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          
           if (isInProgress && isClassic) ...[
             const SizedBox(height: 10),
             SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(mainAxisAlignment: MainAxisAlignment.center, children: List.generate(5, (i) => _setButton(i + 1)))),
             const SizedBox(height: 15),
           ],
 
-          if (isInProgress && !isClassic) ...[
+          if ((isInProgress || isFinished) && !isClassic) ...[
              const SizedBox(height: 10),
              ElevatedButton(
                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (c) => TournamentScreen(title: widget.match['title'], matchId: widget.match['id'], courts: courts, gameType: type))),
@@ -539,7 +645,7 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
              const SizedBox(height: 20),
           ],
 
-          ...List.generate(courts, (i) => _buildCourt(i, isInProgress && isClassic)),
+          ...List.generate(courts, (i) => _buildCourt(i, isInProgress && isClassic, isFinished, scoreDisplay)),
           
           if (waitingList.isNotEmpty) ...[
              const Padding(padding: EdgeInsets.all(15), child: Align(alignment: Alignment.centerLeft, child: Text("Лист ожидания", style: TextStyle(color: Colors.grey)))),
@@ -551,7 +657,7 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
           if (!isFinished) 
              Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: Row(children: [
                if (!isInProgress) Expanded(child: ElevatedButton(onPressed: amIJoined ? _leaveMatch : null, style: ElevatedButton.styleFrom(backgroundColor: _dangerRed, minimumSize: const Size(0, 50)), child: const Text("ВЫЙТИ", style: TextStyle(fontWeight: FontWeight.bold)))),
-               if (isCreator && !isInProgress) ...[
+               if (!isInProgress && isCreator) ...[
                  const SizedBox(width: 10),
                  Expanded(child: ElevatedButton(onPressed: _startMatch, style: ElevatedButton.styleFrom(backgroundColor: Colors.green, minimumSize: const Size(0, 50)), child: const Text("СТАРТ", style: TextStyle(fontWeight: FontWeight.bold))))
                ]
@@ -574,17 +680,23 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
     );
   }
 
-  Widget _buildCourt(int index, bool showScore) {
+  Widget _buildCourt(int index, bool showScore, bool isFinished, String finalScore) {
     int baseControllerIndex = (_currentSet - 1) * 8 + (index * 2); 
+
+    Widget centerWidget = const Text("VS", style: TextStyle(color: Colors.white24, fontWeight: FontWeight.w900, fontSize: 24));
+
+    if (showScore) {
+       centerWidget = Row(children: [SizedBox(width: 35, child: TextField(controller: _scoreControllers[baseControllerIndex], textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 22), keyboardType: TextInputType.number)), const Text(":", style: TextStyle(color: Colors.white, fontSize: 22)), SizedBox(width: 35, child: TextField(controller: _scoreControllers[baseControllerIndex + 1], textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 22), keyboardType: TextInputType.number))]);
+    } else if (isFinished) {
+       centerWidget = Text(finalScore, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 24, fontStyle: FontStyle.italic, shadows: [Shadow(color: Colors.green, blurRadius: 10)]));
+    }
 
     return Container(margin: const EdgeInsets.all(15), padding: const EdgeInsets.all(15), decoration: BoxDecoration(color: _cardColor, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.white10)), child: Column(children: [
         Text("КОРТ ${index + 1}", style: TextStyle(color: _primaryBlue, fontWeight: FontWeight.bold)),
         const SizedBox(height: 15),
         Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
           Column(children: [_buildSlot(index * 4), const SizedBox(height: 10), _buildSlot(index * 4 + 1)]),
-          showScore 
-            ? Row(children: [SizedBox(width: 35, child: TextField(controller: _scoreControllers[baseControllerIndex], textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 22), keyboardType: TextInputType.number)), const Text(":", style: TextStyle(color: Colors.white, fontSize: 22)), SizedBox(width: 35, child: TextField(controller: _scoreControllers[baseControllerIndex + 1], textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 22), keyboardType: TextInputType.number))])
-            : const Text("VS", style: TextStyle(color: Colors.white24, fontWeight: FontWeight.w900, fontSize: 24)),
+          centerWidget,
           Column(children: [_buildSlot(index * 4 + 2), const SizedBox(height: 10), _buildSlot(index * 4 + 3)]),
         ])
       ]));
@@ -614,5 +726,13 @@ class _MatchLobbyScreenState extends State<MatchLobbyScreen> {
          const SizedBox(height: 10),
          Text(profile['username'] ?? "Игрок", style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold))
     ]);
+  }
+
+  // Форматирование времени в 00:00:00
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, "0");
+    String twoDigitMinutes = twoDigits(duration.inMinutes.remainder(60));
+    String twoDigitSeconds = twoDigits(duration.inSeconds.remainder(60));
+    return "${twoDigits(duration.inHours)}:$twoDigitMinutes:$twoDigitSeconds";
   }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter/services.dart';
 
 // Импорты экранов (убедись, что файлы лежат в папке lib/screens/)
 import 'screens/auth_screen.dart'; 
@@ -8,6 +9,12 @@ import 'screens/home_screen.dart';
 import 'screens/matches_screen.dart'; 
 import 'screens/profile_screen.dart'; 
 import 'screens/groups_screen.dart'; 
+
+// ================================================================================
+// © 2026 Andrii Kosiak - All Rights Reserved
+// PADEL IQ PRO - Professional Padel Tennis Analysis Application
+// Unauthorized copying, modification, or redistribution is strictly prohibited.
+// ================================================================================
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();

@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:math'; // Для рандома советов
 import '../main.dart';
 import 'create_match_screen.dart';
 import 'profile_screen.dart';
-import 'match_details_screen.dart'; // 🔥 ВОТ ЭТОГО НЕ ХВАТАЛО
+import 'match_details_screen.dart'; 
+import 'matches_screen.dart';
+import 'match_analysis_screen.dart'; // 🔥 Экран анализа (паутинка)
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -28,54 +31,137 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Map<String, dynamic>? _nextMatch;
   List<dynamic> _activeMatches = [];
+  Map<String, dynamic>? _lastMatch;
 
-  // Статистика (Хардкод)
   final Map<String, String> _healthStats = {
-    'kcal': '680',
-    'bpm': '145',
-    'dist': '4.5 км',
-    'last_score': '6-3, 6-4',
+    'kcal': '0', 'bpm': '0', 'dist': '0 км', 'last_score': '...',
   };
+
+  // Список советов для AI Тренера
+  final List<String> _aiTips = [
+    "«При игре у сетки держи ракетку выше уровня глаз.»",
+    "«В паделе стена — твой друг. Не бойся пропускать мячи.»",
+    "«Свеча (Lob) — самый важный тактический удар.»",
+    "«Не бей смэш из-за линии подачи. Риск ошибки высок.»",
+    "«Коммуникация важнее техники. Говорите 'Мой' или 'Твой'.»",
+    "«Главное на приеме — просто вернуть мяч в игру.»"
+  ];
+  String _currentTip = "";
 
   @override
   void initState() {
     super.initState();
     _loadData();
+    // Выбираем случайный совет при запуске
+    _currentTip = _aiTips[Random().nextInt(_aiTips.length)];
   }
 
-  // Загрузка данных
   Future<void> _loadData() async {
     final uid = supabase.auth.currentUser?.id;
     if (uid == null) return;
 
     try {
+      // 1. ЗАГРУЗКА ПРОФИЛЯ (Отдельно, чтобы всегда показывался)
       final profile = await supabase
           .from('profiles')
           .select('username, avatar_url, level')
           .eq('id', uid)
           .single();
 
-      final now = DateTime.now().toIso8601String();
-      final matchesData = await supabase
-          .from('matches')
-          .select()
-          .gte('date', now)
-          .order('date', ascending: true)
-          .limit(10);
-
       if (mounted) {
         setState(() {
           _username = profile['username'] ?? "Игрок";
           _avatarUrl = profile['avatar_url'] ?? "";
           _level = (profile['level'] ?? 0).toDouble();
+        });
+      }
 
-          if (matchesData.isNotEmpty) {
-            _nextMatch = matchesData.first;
-            _activeMatches = matchesData;
-          } else {
-            _nextMatch = null;
-            _activeMatches = [];
+      // 2. ЗАГРУЗКА МАТЧЕЙ
+      final now = DateTime.now().toIso8601String();
+      debugPrint("⏰ Current time for filtering: $now");
+
+      // 3. Активные матчи (Публичные, в будущем)
+      debugPrint("📥 Fetching active public matches...");
+      final matchesData = await supabase
+          .from('matches')
+          .select('*, clubs(*)')
+          .filter('group_id', 'is', null) // Только публичные
+          .gte('start_time', now) 
+          .order('start_time', ascending: true)
+          .limit(10);
+      debugPrint("✅ Active public matches: ${matchesData.length}");
+      if (matchesData.isNotEmpty) {
+        for (var m in matchesData) {
+          debugPrint("   - ${m['start_time']} at ${m['clubs']?['name'] ?? m['location']}");
+        }
+      }
+
+      // 4. История (Последняя СОЗДАННУЮ мною игра - независимо от времени!)
+      debugPrint("📥 Fetching my last created match (any time)...");
+      Map<String, dynamic>? lastMatch;
+      try {
+        final lastRes = await supabase.from('matches')
+            .select('*, clubs(*)')
+            .eq('creator_id', uid)
+            // Убрали фильтр по времени! Берем просто последнюю по дате создания
+            .order('created_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
+        lastMatch = lastRes;
+        if (lastMatch != null) {
+          debugPrint("✅ Last match found!");
+          debugPrint("   ID: ${lastMatch['id']}");
+          debugPrint("   Title: ${lastMatch['title']}");
+          debugPrint("   Score: ${lastMatch['score']} (type: ${lastMatch['score'].runtimeType})");
+          debugPrint("   Club: ${lastMatch['clubs']?['name']}");
+          debugPrint("   Type: ${lastMatch['type']}");
+        } else {
+          debugPrint("✅ Last match: NOT FOUND");
+        }
+      } catch (e) {
+        debugPrint("⚠️ Error loading last match: $e");
+      }
+
+      // 5. Ближайшая СОЗДАННАЯ мною игра (Будущая)
+      debugPrint("📥 Fetching my next created match...");
+      Map<String, dynamic>? nextMatch;
+      try {
+        final myNextRes = await supabase.from('matches')
+            .select('*, clubs(*)')
+            .eq('creator_id', uid)
+            .gte('start_time', now) // Будущие матчи
+            .order('start_time', ascending: true)
+            .limit(1)
+            .maybeSingle();
+        nextMatch = myNextRes;
+        debugPrint("✅ Next match: ${nextMatch != null ? nextMatch['start_time'] : 'NOT FOUND'}");
+      } catch (e) {
+        debugPrint("⚠️ Error loading next match: $e");
+      }
+
+      if (mounted) {
+        setState(() {
+          _nextMatch = nextMatch;
+          
+          // Активные - это список публичных, убираем оттуда свою ближайшую
+          _activeMatches = List.from(matchesData);
+          if (_nextMatch != null) {
+             _activeMatches.removeWhere((m) => m['id'] == _nextMatch!['id']);
           }
+
+          _lastMatch = lastMatch;
+
+          // Статистика
+          if (lastMatch != null) {
+            String sc = lastMatch['score']?.toString() ?? "Завершен";
+            _healthStats['last_score'] = sc.isEmpty ? "Завершен" : sc;
+            _healthStats['kcal'] = "720"; 
+            _healthStats['bpm'] = "148";
+            _healthStats['dist'] = "5.1 км";
+          } else {
+            _healthStats['last_score'] = "Нет игр";
+          }
+
           _isLoading = false;
         });
       }
@@ -86,11 +172,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   int _getWinnerTeam(String score) {
+    if (score == '...' || score == 'Нет игр' || score == 'Завершен' || score == 'Турнир') return 0;
     int setsA = 0;
     int setsB = 0;
     try {
-      final sets = score.split(',');
+      final sets = score.replaceAll(',', ' ').split(' ');
       for (var s in sets) {
+        if (s.trim().isEmpty) continue;
         final parts = s.trim().split('-');
         if (parts.length == 2) {
           int a = int.tryParse(parts[0]) ?? 0;
@@ -99,24 +187,17 @@ class _HomeScreenState extends State<HomeScreen> {
           if (b > a) setsB++;
         }
       }
-    } catch (e) {
-      return 0;
-    }
+    } catch (e) { return 0; }
     if (setsA > setsB) return 1;
     if (setsB > setsA) return 2;
     return 0;
   }
 
   LinearGradient _getLevelGradient(double level) {
-    if (level >= 4.5) {
-      return const LinearGradient(colors: [Color(0xFFFFD700), Color(0xFFFF8C00)]);
-    } else if (level >= 3.5) {
-      return const LinearGradient(colors: [Color(0xFF00E5FF), Color(0xFF2979FF)]);
-    } else if (level >= 2.5) {
-      return const LinearGradient(colors: [Color(0xFF00C853), Color(0xFF64DD17)]);
-    } else {
-      return const LinearGradient(colors: [Color(0xFF78909C), Color(0xFF455A64)]);
-    }
+    if (level >= 4.5) return const LinearGradient(colors: [Color(0xFFFFD700), Color(0xFFFF8C00)]);
+    if (level >= 3.5) return const LinearGradient(colors: [Color(0xFF00E5FF), Color(0xFF2979FF)]);
+    if (level >= 2.5) return const LinearGradient(colors: [Color(0xFF00C853), Color(0xFF64DD17)]);
+    return const LinearGradient(colors: [Color(0xFF78909C), Color(0xFF455A64)]);
   }
 
   String _getLevelStatus(double level) {
@@ -128,9 +209,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Color _getMatchColor(String type) {
-    if (type == 'Americano') return _neonGreen;
-    if (type == 'Competitive') return _neonOrange;
-    if (type == 'Training') return Colors.purpleAccent;
+    if (type.contains('Americano')) return _neonGreen;
+    if (type.contains('Competitive')) return _neonOrange;
     return Colors.blue;
   }
 
@@ -146,7 +226,7 @@ class _HomeScreenState extends State<HomeScreen> {
             SizedBox(
               height: 32,
               child: Image.asset(
-                'assets/logo.png',
+                'assets/logo.png', // 🔥 ЛОГОТИП ВМЕСТО ИКОНКИ
                 fit: BoxFit.contain,
                 errorBuilder: (context, error, stackTrace) =>
                     Icon(Icons.sports_tennis, color: _neonGreen),
@@ -168,7 +248,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 1. ВЕРХНИЙ БЛОК
+                  // 1. ВЕРХНИЙ БЛОК (Приветствие + Ближайшая игра + Профиль)
                   IntrinsicHeight(
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -284,24 +364,22 @@ class _HomeScreenState extends State<HomeScreen> {
                           scrollDirection: Axis.horizontal,
                           child: Row(
                             children: _activeMatches.map((match) {
-                              final dateStr = match['date'] != null
-                                  ? match['date'].toString().substring(5, 10)
-                                  : "??-??";
-                              final timeStr = match['time'] != null
-                                  ? match['time'].toString().substring(0, 5)
-                                  : "??:??";
-                              final clubName = match['location'] ?? "Клуб";
+                              DateTime d = DateTime.tryParse(match['start_time'].toString()) ?? DateTime.now();
+                              String dateStr = "${d.day}.${d.month}";
+                              String timeStr = "${d.hour.toString().padLeft(2,'0')}:${d.minute.toString().padLeft(2,'0')}";
+                              String clubName = match['clubs'] != null 
+                                  ? match['clubs']['name'] 
+                                  : (match['location'] ?? "Клуб");
                               final type = match['type'] ?? "Match";
 
                               return Padding(
                                 padding: const EdgeInsets.only(right: 15),
                                 child: _buildMatchCard(
                                   clubName,
-                                  timeStr,
+                                  "$timeStr | $dateStr",
                                   "Игрок",
                                   type,
                                   _getMatchColor(type),
-                                  // 🔥 ПЕРЕДАЕМ ДЕЙСТВИЕ ПРИ НАЖАТИИ
                                   () {
                                     Navigator.push(
                                         context,
@@ -326,11 +404,14 @@ class _HomeScreenState extends State<HomeScreen> {
                               color: Colors.white,
                               fontSize: 18,
                               fontWeight: FontWeight.bold)),
-                      Text("Все игры",
-                          style: TextStyle(
-                              color: _neonCyan,
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold)),
+                      GestureDetector(
+                        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (c) => const MatchesScreen(initialIndex: 2))),
+                        child: Text("Все игры",
+                            style: TextStyle(
+                                color: _neonCyan,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold)),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 15),
@@ -409,8 +490,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         ]),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: const [
-                        Row(
+                      children: [
+                        const Row(
                           children: [
                             Icon(Icons.auto_awesome,
                                 color: Colors.white, size: 20),
@@ -421,10 +502,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                     fontWeight: FontWeight.bold)),
                           ],
                         ),
-                        SizedBox(height: 8),
+                        const SizedBox(height: 8),
                         Text(
-                            "«При игре у сетки держи ракетку выше уровня глаз. Это сократит время реакции на 0.5 сек.»",
-                            style: TextStyle(
+                            _currentTip, // 🔥 СЛУЧАЙНЫЙ СОВЕТ
+                            style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 14,
                                 fontStyle: FontStyle.italic)),
@@ -432,11 +513,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   const SizedBox(height: 15),
+                  
+                  // НОВОСТИ
                   _buildNewsCard("Анализ слабых сторон",
-                      "Твой бэкхенд улучшился на 15%", Icons.analytics),
+                      "Твой бэкхенд улучшился на 15%", Icons.analytics, () {
+                        Navigator.push(context, MaterialPageRoute(builder: (c) => const ProfileScreen()));
+                      }),
                   const SizedBox(height: 10),
                   _buildNewsCard("Турнир Valencia Open",
-                      "Регистрация открыта!", Icons.emoji_events),
+                      "Регистрация открыта!", Icons.emoji_events, () {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Раздел турниров скоро будет доступен! 🏆")));
+                      }),
 
                   const SizedBox(height: 80),
                 ],
@@ -445,7 +532,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // --- ВИДЖЕТЫ ---
+  // --- ВИДЖЕТЫ (ВЕРНУЛ ВСЕ НА МЕСТО) ---
 
   Widget _buildEmptyState() {
     return Column(
@@ -458,7 +545,7 @@ class _HomeScreenState extends State<HomeScreen> {
             Text("Ближайшая игра:",
                 style: TextStyle(color: Colors.grey, fontSize: 10)),
             SizedBox(height: 4),
-            Text("Пока нет записей",
+            Text("Нет запланированных",
                 style: TextStyle(
                     color: Colors.white, fontWeight: FontWeight.bold)),
           ],
@@ -481,17 +568,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildNextMatchState() {
-    String dateStr = "";
-    String timeStr = "";
-    String location = "Локация не указана";
-
-    if (_nextMatch != null) {
-      final rawDate = _nextMatch!['date'].toString();
-      final rawTime = _nextMatch!['time'].toString();
-      location = _nextMatch!['location'] ?? "Клуб не указан";
-      if (rawDate.length >= 10) dateStr = rawDate.substring(0, 10);
-      if (rawTime.length >= 5) timeStr = rawTime.substring(0, 5);
-    }
+    final m = _nextMatch!;
+    DateTime d = DateTime.tryParse(m['start_time'].toString()) ?? DateTime.now();
+    String dateStr = "${d.day}.${d.month}";
+    String timeStr = "${d.hour.toString().padLeft(2,'0')}:${d.minute.toString().padLeft(2,'0')}";
+    String location = m['clubs'] != null ? m['clubs']['name'] : (m['location'] ?? "Клуб");
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -536,13 +617,11 @@ class _HomeScreenState extends State<HomeScreen> {
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8))),
           onPressed: () {
-            if (_nextMatch != null) {
               Navigator.push(
                   context,
                   MaterialPageRoute(
                       builder: (context) =>
-                          MatchDetailsScreen(match: _nextMatch!)));
-            }
+                          MatchDetailsScreen(match: m)));
           },
           child: const Text("Подробнее", style: TextStyle(color: Colors.white)),
         )
@@ -550,9 +629,31 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // 🔥 ИСПРАВЛЕННЫЙ БЛОК С КНОПКОЙ АНАЛИЗА
   Widget _buildLastMatchCard() {
-    String score = _healthStats['last_score']!;
+    if (_lastMatch == null) {
+        return Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+                color: _cardColor, 
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.white10)),
+            child: const Text("История пуста", style: TextStyle(color: Colors.grey))
+        );
+    }
+
+    // Получаем счет из самого матча, а не из _healthStats
+    String score = _lastMatch!['score']?.toString() ?? "...";
+    if (score.isEmpty) score = "Завершен";
+    
     int winner = _getWinnerTeam(score);
+    String clubName = _lastMatch!['clubs'] != null 
+        ? _lastMatch!['clubs']['name'] 
+        : (_lastMatch!['location'] ?? "Клуб");
+    String type = _lastMatch!['type'] ?? "Match";
+
+    debugPrint("📊 Last match score: $score, Winner: $winner");
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -570,11 +671,11 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: const [
-              Text("Вчера • Central Club",
-                  style: TextStyle(color: Colors.grey, fontSize: 12)),
-              Text("Competitive",
-                  style: TextStyle(color: Colors.grey, fontSize: 10)),
+            children: [
+              Text("Прошлая • $clubName",
+                  style: const TextStyle(color: Colors.grey, fontSize: 12)),
+              Text(type,
+                  style: const TextStyle(color: Colors.grey, fontSize: 10)),
             ],
           ),
           const Divider(color: Colors.white10, height: 20),
@@ -612,7 +713,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 size: 24, color: Colors.white)
                             : null),
                     const SizedBox(height: 8),
-                    const Text("Вы / Партнер",
+                    const Text("Вы",
                         textAlign: TextAlign.center,
                         style: TextStyle(
                             color: Colors.white,
@@ -626,7 +727,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Text(score,
                     style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 28,
+                        fontSize: 24,
                         fontWeight: FontWeight.w900,
                         fontStyle: FontStyle.italic)),
               ),
@@ -665,14 +766,27 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
           const SizedBox(height: 20),
+          
+          // 🔥 ИСПРАВЛЕННАЯ КНОПКА (БЕЗ child: ОШИБКИ)
           SizedBox(
             width: double.infinity,
             height: 40,
             child: OutlinedButton.icon(
-              onPressed: () {},
+              onPressed: () {
+                Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const MatchAnalysisScreen()))
+                    .then((result) {
+                  if (result == true) {
+                    debugPrint("🔄 Reloading data after skills update...");
+                    _loadData();
+                  }
+                });
+              },
               icon: const Icon(Icons.analytics_outlined,
                   size: 18, color: Colors.white),
-              label: const Text("Полный анализ матча",
+              label: const Text("Оценить свою игру",
                   style: TextStyle(color: Colors.white, fontSize: 12)),
               style: OutlinedButton.styleFrom(
                   side: const BorderSide(color: Colors.white24),
@@ -685,12 +799,10 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Обновленный виджет карточки (Кликабельна вся область)
   Widget _buildMatchCard(String club, String time, String creator, String type,
       Color color, VoidCallback onTap) {
-    
     return GestureDetector(
-      onTap: onTap, // 🔥 ТЕПЕРЬ КЛИКАБЕЛЬНА ВСЯ КАРТОЧКА
+      onTap: onTap,
       child: Container(
         width: 160,
         padding: const EdgeInsets.all(12),
@@ -733,12 +845,11 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
             const SizedBox(height: 8),
-            // КНОПКА ВОЙТИ
             SizedBox(
               width: double.infinity,
               height: 30,
               child: ElevatedButton(
-                onPressed: onTap, 
+                onPressed: onTap,
                 style: ElevatedButton.styleFrom(
                     backgroundColor: color,
                     elevation: 0,
@@ -786,22 +897,24 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildNewsCard(String title, String subtitle, IconData icon) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-          color: _cardColor, borderRadius: BorderRadius.circular(12)),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-                color: Colors.white10, borderRadius: BorderRadius.circular(8)),
-            child: Icon(icon, color: Colors.white70, size: 20),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
+  Widget _buildNewsCard(String title, String subtitle, IconData icon, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+            color: _cardColor, borderRadius: BorderRadius.circular(12)),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                  color: Colors.white10, borderRadius: BorderRadius.circular(8)),
+              child: Icon(icon, color: Colors.white70, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title,
@@ -809,10 +922,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           color: Colors.white, fontWeight: FontWeight.bold)),
                   Text(subtitle,
                       style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                ]),
-          ),
-          const Icon(Icons.chevron_right, color: Colors.grey)
-        ],
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: Colors.grey)
+          ],
+        ),
       ),
     );
   }
